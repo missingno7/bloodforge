@@ -22,6 +22,92 @@ def _integer(name: str, value: object) -> int:
     return value
 
 
+def _bounded(name: str, value: object, minimum: int, maximum: int) -> int:
+    number = _integer(name, value)
+    if not minimum <= number <= maximum:
+        raise SceneError(f"{name} must be in {minimum}..{maximum}")
+    return number
+
+
+@dataclass(frozen=True)
+class PlaneMaterial:
+    """Source-authored flat appearance, expressed in native MAP field units."""
+
+    tile: int = 0
+    shade: int = 0
+    palette: int = 0
+    xpanning: int = 0
+    ypanning: int = 0
+    stat: int = 0
+
+    def __post_init__(self) -> None:
+        _bounded("plane tile", self.tile, 0, 32767)
+        _bounded("plane shade", self.shade, -128, 127)
+        _bounded("plane palette", self.palette, 0, 255)
+        _bounded("plane xpanning", self.xpanning, 0, 255)
+        _bounded("plane ypanning", self.ypanning, 0, 255)
+        _bounded("plane stat", self.stat, 0, 65535)
+        if self.stat & 2:
+            raise SceneError("sloped plane stat bit is unsupported for stair appearance")
+
+
+@dataclass(frozen=True)
+class WallMaterial:
+    """Source-authored wall appearance; blocking and hitscan bits are excluded."""
+
+    tile: int = 0
+    overlay: int = 0
+    shade: int = 0
+    palette: int = 0
+    xrepeat: int = 8
+    yrepeat: int = 8
+    xpanning: int = 0
+    ypanning: int = 0
+    flags: int = 0
+
+    def __post_init__(self) -> None:
+        _bounded("wall tile", self.tile, 0, 32767)
+        _bounded("wall overlay", self.overlay, 0, 32767)
+        _bounded("wall shade", self.shade, -128, 127)
+        _bounded("wall palette", self.palette, 0, 255)
+        _bounded("wall xrepeat", self.xrepeat, 0, 255)
+        _bounded("wall yrepeat", self.yrepeat, 0, 255)
+        _bounded("wall xpanning", self.xpanning, 0, 255)
+        _bounded("wall ypanning", self.ypanning, 0, 255)
+        _bounded("wall flags", self.flags, 0, 65535)
+        # Native Build wall flags: bit 0 blocks movement, bit 6 blocks
+        # hitscan. Keep one-way portals (bit 5) out of appearance as well.
+        # Allow bottom-swap/alignment, flips, masking and translucence only
+        # (bits 1,2,3,4,7,8,9; nblood/source/build/include/buildtypes.h).
+        if self.flags & ~0x039E:
+            raise SceneError("wall flags contain unsupported collision, one-way or extension bits")
+
+
+@dataclass(frozen=True)
+class StepAppearance:
+    """Per-step material appearance and deterministic native wall anchor."""
+
+    floor: PlaneMaterial = PlaneMaterial()
+    ceiling: PlaneMaterial = PlaneMaterial()
+    north: WallMaterial = WallMaterial()
+    east: WallMaterial = WallMaterial()
+    south: WallMaterial = WallMaterial()
+    west: WallMaterial = WallMaterial()
+    visibility: int = 0
+    first_wall: Direction = "north"
+
+    def __post_init__(self) -> None:
+        for name in ("floor", "ceiling"):
+            if not isinstance(getattr(self, name), PlaneMaterial):
+                raise SceneError(f"{name} must be PlaneMaterial")
+        for name in ("north", "east", "south", "west"):
+            if not isinstance(getattr(self, name), WallMaterial):
+                raise SceneError(f"{name} must be WallMaterial")
+        _bounded("sector visibility", self.visibility, 0, 255)
+        if self.first_wall not in ("north", "east", "south", "west"):
+            raise SceneError("first_wall must be north, east, south, or west")
+
+
 @dataclass(frozen=True)
 class StairSpec:
     """A straight run of flat rectangular steps.
@@ -46,6 +132,7 @@ class StairSpec:
     floor_tile: int
     ceiling_tile: int
     wall_tile: int
+    appearance: tuple[StepAppearance, ...] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.id, str) or not self.id.strip():
@@ -61,6 +148,11 @@ class StairSpec:
             tile = _integer(name, getattr(self, name))
             if not 0 <= tile <= 32767:
                 raise SceneError(f"{name} must fit a non-negative signed 16-bit tile id")
+        if self.appearance is not None:
+            if not isinstance(self.appearance, tuple) or len(self.appearance) != self.count:
+                raise SceneError("appearance must be a tuple with exactly one StepAppearance per step")
+            if any(not isinstance(value, StepAppearance) for value in self.appearance):
+                raise SceneError("appearance values must be StepAppearance")
 
 
 @dataclass(frozen=True)

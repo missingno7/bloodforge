@@ -7,7 +7,7 @@ maps, reconstructs held-out fragments, and records native, structural, visual,
 and runtime evidence separately. No LLM is required by the library or CLI.
 
 This is a foundation, not an autonomous full-level designer. See
-[the measured milestone](docs/milestone.md), [architecture](docs/architecture.md),
+[the first milestone](docs/milestone.md), [surface reconstruction checkpoint](docs/surface-checkpoint.md), [architecture](docs/architecture.md),
 and [task ledger](docs/tasks.md).
 
 ## Run from this checkout
@@ -46,7 +46,8 @@ Equivalent environment variables are `BLOODFORGE_REFERENCE_ROOT`,
 
 For another Python environment: `python -m pip install -e .` exposes
 `bloodforge` and `python -m bloodforge`. There are no runtime third-party
-dependencies. A wheel can be built offline with a local setuptools/wheel
+dependencies for the core. Paired pixel comparisons use optional Pillow:
+`python -m pip install -e ".[visual]"`. A wheel can be built offline with a local setuptools/wheel
 installation using `python -m pip wheel . --no-deps --no-build-isolation
 --no-index --wheel-dir data/wheels`.
 For repeatable wheel timestamps, set `SOURCE_DATE_EPOCH=1767225600`; the measured
@@ -91,7 +92,10 @@ historical content and provenance. Source hashes are rechecked on every scan.
 
 Compilation returns a MAP artifact path and semantic-to-native object map.
 The source model currently accepts one straight stair per scene, material tile
-IDs and an optional player start. It intentionally cannot represent a complete
+IDs, optional per-step plane/wall appearance and an optional player start.
+Appearance includes shade, palette, texture scale/panning, visual flags,
+visibility and a cardinal first-wall anchor for relative texture alignment.
+It intentionally cannot represent a complete
 gameplay level yet. `scene apply` takes a JSON list of `SceneChange` records,
 an `--expected-revision`, and optional `--dry-run`; each record has operation,
 object_id, expected, and value. Exact previous-value preconditions and native
@@ -120,6 +124,35 @@ assert player traversal, or validate mechanisms. Both commands accept
 `--executable` and `--assets`; defaults resolve installed tools in the reference
 tree. Missing tools or failed checks never count as passes. Reports and PNGs
 are retained in the content-addressed store and indexed in `workspace.db`.
+
+## Fitted surface reconstruction and context fixtures
+
+The separate fitted diagnostic measures appearance from a frozen held-out
+source, compiles geometry from its recipe parameters and can attach the result
+to a source-held-fixed context fixture. The latter retains all original
+surroundings and sprites. It is benchmark apparatus, not room generation or
+learned material selection. The original baseline results remain available.
+
+For the local E2M5 example (run ingestion/mining/inference first):
+
+```powershell
+$fitted = .\tools\bf.ps1 recipes reconstruct rect-stairs-3bea04cfdf5c73f5 --pattern 0a65e188fc188eb841727d92a6f49d37dd4c35d6364fdd7768efc0f30a291399 --with-source-context | ConvertFrom-Json
+.\tools\bf.ps1 scene inspect $fitted.project_id
+.\tools\bf.ps1 level observe ..\llmapper\maps\blood\campaign\E2M5.MAP --output data\fitted-source --cameras examples\e2m5-stair.cameras.json
+.\tools\bf.ps1 level observe $fitted.context_fixture.artifact_path --output data\fitted-candidate --cameras examples\e2m5-stair.cameras.json
+.\tools\bf.ps1 recipes compare-views --reconstruction $fitted.report_path --source data\fitted-source\summary.json --candidate data\fitted-candidate\summary.json
+```
+
+Choose fresh observation directories on subsequent runs. Other recipe/source
+populations can have different IDs; `recipes list` and `patterns search` expose
+them. Comparison requires identical poses, executable/resources/settings and
+intact recorded PNGs. It reports equal/changed pixels and RGB error, without
+an aggregate design score or automatic capability promotion.
+
+The existing NBlood bot is unfinished and unreliable in local probes. Its
+[experimental Python diagnostic](docs/experimental-bot-diagnostic.md) is kept
+outside normal evaluation and promotion; it is not a traversal oracle. A
+repeatable input/position harness remains necessary for behavioral validation.
 
 ## Data and licensing
 

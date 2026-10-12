@@ -1,15 +1,18 @@
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from bloodforge.compiler import compile_scene
 from bloodforge.config import Config
 from bloodforge.corpus import ingest
+from bloodforge.evidence import record_fitted_visual
 from bloodforge.learning import (
     eligible_contents, evaluate_recipe, infer_recipe, mine_stairs, split_groups,
 )
 from bloodforge.native import encode_map
+from bloodforge.reconstruction import reconstruct_fitted
 from bloodforge.scene import LevelScene, StairSpec
 from bloodforge.store import database
 
@@ -127,6 +130,35 @@ class LearningIntegrationTests(unittest.TestCase):
         first_report = Path(first_evaluation["report_path"])
         first_report_bytes = first_report.read_bytes()
 
+        selected = next(item for item in first_evaluation["results"] if item.get("artifact_path"))
+        fitted = reconstruct_fitted(self.config, learned["recipe_id"], selected["pattern_id"], with_source_context=True)
+        again = reconstruct_fitted(self.config, learned["recipe_id"], selected["pattern_id"], with_source_context=True)
+        self.assertEqual(fitted["report_path"], again["report_path"])
+        self.assertFalse(fitted["promoted_to_verified"])
+        self.assertEqual(fitted["context_fixture"]["artifact_hash"], selected["source"]["sha256"])
+        self.assertTrue(fitted["context_fixture"]["integrity"]["source_in_memory_unchanged"])
+        self.assertIn("no learned material", fitted["appearance_policy"])
+        comparison = {"runs": {"source": {"map": {"sha256": "wrong-source"}},
+                               "candidate": {"map": {"sha256": fitted["context_fixture"]["artifact_hash"]}}},
+                      "views": [], "claims": {"automatic_verification": False}}
+        with patch("bloodforge.visual_fidelity.compare_observations", return_value=comparison):
+            with self.assertRaisesRegex(ValueError, "source identity"):
+                record_fitted_visual(self.config, Path(fitted["report_path"]), Path("source"), Path("candidate"))
+            comparison["runs"]["source"]["map"]["sha256"] = fitted["source"]["sha256"]
+            linked = record_fitted_visual(self.config, Path(fitted["report_path"]), Path("source"), Path("candidate"))
+            self.assertFalse(linked["promoted_to_verified"])
+            comparison["runs"]["candidate"]["map"]["sha256"] = "unrelated-map"
+            with self.assertRaisesRegex(ValueError, "reconstruction output"):
+                record_fitted_visual(self.config, Path(fitted["report_path"]), Path("source"), Path("candidate"))
+        forged_path = self.base / "forged.json"
+        forged = json.loads(Path(fitted["report_path"]).read_text())
+        forged["source"]["sha256"] = "invented"
+        forged_path.write_text(json.dumps(forged))
+        with self.assertRaisesRegex(ValueError, "not an indexed benchmark"):
+            record_fitted_visual(self.config, forged_path, Path("source"), Path("candidate"))
+        with self.assertRaisesRegex(ValueError, "frozen held-out"):
+            reconstruct_fitted(self.config, learned["recipe_id"], "unknown-pattern")
+
         # Deactivate one frozen heldout source only after its first evaluation.
         # Evaluation must retain the original candidate denominator and record
         # the missing eligibility as evidence rather than silently dropping it.
@@ -139,6 +171,8 @@ class LearningIntegrationTests(unittest.TestCase):
             self.assertGreater(cursor.rowcount, 0)
 
         evaluated = evaluate_recipe(self.config, learned["recipe_id"])
+        with self.assertRaisesRegex(ValueError, "no longer eligible"):
+            reconstruct_fitted(self.config, learned["recipe_id"], target["pattern_id"])
         self.assertEqual(evaluated["heldout_candidates"], len(heldout_snapshot))
         self.assertEqual(evaluated["counts"].get("ineligible_evidence"), expected_ineligible)
         self.assertFalse(evaluated["promoted_to_verified"])

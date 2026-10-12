@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .native import NativeMap, Sector, Wall
-from .scene import LevelScene, PlayerStart, StairSpec
+from .scene import LevelScene, PlayerStart, StairSpec, StepAppearance, WallMaterial
 
 
 class SceneCompileError(ValueError):
@@ -69,6 +69,32 @@ def _walls_for_rect(x0: int, y0: int, x1: int, y1: int, *, tile: int,
     return walls
 
 
+_CARDINAL_EDGES = {"north": 0, "east": 1, "south": 2, "west": 3}
+_EDGE_CORNERS = ((0, 1), (1, 2), (2, 3), (3, 0))
+
+
+def _walls_for_appearance(x0: int, y0: int, x1: int, y1: int, *,
+                          first_index: int, appearance: StepAppearance
+                          ) -> tuple[list[Wall], dict[str, int]]:
+    corners = ((x0, y0), (x1, y0), (x1, y1), (x0, y1))
+    first_edge = _CARDINAL_EDGES[appearance.first_wall]
+    side_by_edge = ("north", "east", "south", "west")
+    order = tuple((first_edge + offset) % 4 for offset in range(4))
+    edge_index = {side_by_edge[edge]: first_index + slot for slot, edge in enumerate(order)}
+    walls: list[Wall] = []
+    for slot, edge in enumerate(order):
+        start_corner, _ = _EDGE_CORNERS[edge]
+        x, y = corners[start_corner]
+        material: WallMaterial = getattr(appearance, side_by_edge[edge])
+        walls.append(Wall(x=x, y=y, point2=first_index + (slot + 1) % 4,
+                          nextwall=-1, nextsector=-1, cstat=material.flags,
+                          picnum=material.tile, overpicnum=material.overlay,
+                          shade=material.shade, pal=material.palette,
+                          xrepeat=material.xrepeat, yrepeat=material.yrepeat,
+                          xpanning=material.xpanning, ypanning=material.ypanning))
+    return walls, edge_index
+
+
 def _start_for(stair: StairSpec, player_start: PlayerStart | None) -> tuple[int, int, int, int, int]:
     if player_start is None:
         x0, y0, x1, y1 = _step_bounds(stair, 0)
@@ -110,21 +136,44 @@ def compile_scene(scene: LevelScene) -> CompilationResult:
     sectors: list[Sector] = []
     walls: list[Wall] = []
     object_map: dict[str, tuple[str, int]] = {}
+    side_indices: list[dict[str, int]] = []
     for index in range(stair.count):
         x0, y0, x1, y1 = _step_bounds(stair, index)
         sector_index = len(sectors)
         first_wall = len(walls)
-        sectors.append(Sector(wallptr=first_wall, wallnum=4,
-                              ceilingz=stair.ceiling_z,
-                              floorz=stair.floor_z - index * stair.rise,
-                              ceilingpicnum=stair.ceiling_tile,
-                              floorpicnum=stair.floor_tile))
-        walls.extend(_walls_for_rect(x0, y0, x1, y1, tile=stair.wall_tile,
-                                     first_index=first_wall, sector_index=sector_index))
+        appearance = stair.appearance[index] if stair.appearance is not None else None
+        if appearance is None:
+            sector = Sector(wallptr=first_wall, wallnum=4,
+                            ceilingz=stair.ceiling_z,
+                            floorz=stair.floor_z - index * stair.rise,
+                            ceilingpicnum=stair.ceiling_tile,
+                            floorpicnum=stair.floor_tile)
+            walls.extend(_walls_for_rect(x0, y0, x1, y1, tile=stair.wall_tile,
+                                         first_index=first_wall, sector_index=sector_index))
+            side_indices.append({side: first_wall + edge for edge, side in enumerate(
+                ("north", "east", "south", "west"))})
+        else:
+            floor, ceiling = appearance.floor, appearance.ceiling
+            sector = Sector(wallptr=first_wall, wallnum=4,
+                            ceilingz=stair.ceiling_z,
+                            floorz=stair.floor_z - index * stair.rise,
+                            ceilingstat=ceiling.stat, floorstat=floor.stat,
+                            ceilingpicnum=ceiling.tile, ceilingheinum=0,
+                            ceilingshade=ceiling.shade, ceilingpal=ceiling.palette,
+                            ceilingxpanning=ceiling.xpanning, ceilingypanning=ceiling.ypanning,
+                            floorpicnum=floor.tile, floorheinum=0,
+                            floorshade=floor.shade, floorpal=floor.palette,
+                            floorxpanning=floor.xpanning, floorypanning=floor.ypanning,
+                            visibility=appearance.visibility)
+            step_walls, indices = _walls_for_appearance(
+                x0, y0, x1, y1, first_index=first_wall, appearance=appearance)
+            walls.extend(step_walls)
+            side_indices.append(indices)
+        sectors.append(sector)
         step_id = f"stair/{stair.id}/step/{index:04d}"
         object_map[f"{step_id}/sector"] = ("sector", sector_index)
-        for edge, side in enumerate(("north", "east", "south", "west")):
-            object_map[f"{step_id}/wall/{side}"] = ("wall", first_wall + edge)
+        for side in ("north", "east", "south", "west"):
+            object_map[f"{step_id}/wall/{side}"] = ("wall", side_indices[-1][side])
 
     shared_edges = {
         "east": (1, 3),
@@ -134,8 +183,10 @@ def compile_scene(scene: LevelScene) -> CompilationResult:
     }
     current_edge, next_edge = shared_edges[stair.direction]
     for index in range(stair.count - 1):
-        current_wall = index * 4 + current_edge
-        next_wall = (index + 1) * 4 + next_edge
+        current_side = ("north", "east", "south", "west")[current_edge]
+        next_side = ("north", "east", "south", "west")[next_edge]
+        current_wall = side_indices[index][current_side]
+        next_wall = side_indices[index + 1][next_side]
         walls[current_wall].nextwall = next_wall
         walls[current_wall].nextsector = index + 1
         walls[next_wall].nextwall = current_wall

@@ -1,0 +1,4 @@
+[
+  {"id": "foot_up", "x": -7040, "y": -14080, "z": -3072, "angle": 1024, "horiz": 100, "sector": 10, "screenshot": true},
+  {"id": "mid_down", "x": -7552, "y": -14080, "z": -7168, "angle": 0, "horiz": 100, "sector": 13, "screenshot": true}
+]

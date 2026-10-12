@@ -46,6 +46,14 @@ def _parser() -> argparse.ArgumentParser:
     recipes.add_parser("list")
     evaluate = recipes.add_parser("evaluate")
     evaluate.add_argument("id")
+    reconstruct = recipes.add_parser("reconstruct", help="fit source appearance to a frozen held-out stair")
+    reconstruct.add_argument("id", help="recipe id")
+    reconstruct.add_argument("--pattern", required=True)
+    reconstruct.add_argument("--with-source-context", action="store_true", help="also build a source-held-fixed evaluation fixture")
+    compare = recipes.add_parser("compare-views", help="append controlled-view evidence to a fitted reconstruction")
+    compare.add_argument("--reconstruction", type=Path, required=True)
+    compare.add_argument("--source", type=Path, required=True, help="source observer summary.json")
+    compare.add_argument("--candidate", type=Path, required=True, help="candidate observer summary.json")
     scene = commands.add_parser("scene").add_subparsers(dest="action", required=True)
     create = scene.add_parser("create")
     create.add_argument("id")
@@ -168,16 +176,27 @@ def dispatch(args: argparse.Namespace) -> object:
                 for row in rows[:args.limit]]}
     if args.command == "recipes":
         from .learning import evaluate_recipe, infer_recipe
+        if args.action == "compare-views":
+            from .evidence import record_fitted_visual
+            return record_fitted_visual(config, args.reconstruction, args.source, args.candidate)
         if args.action == "infer":
             return infer_recipe(config, args.population)
         if args.action == "evaluate":
             return _compact_evaluation(evaluate_recipe(config, args.id))
+        if args.action == "reconstruct":
+            from .reconstruction import reconstruct_fitted
+            result = reconstruct_fitted(config, args.id, args.pattern, with_source_context=args.with_source_context)
+            compact = {key: result[key] for key in ("recipe_id", "pattern_id", "status", "project_id", "scene_path",
+                                                   "artifact_hash", "artifact_path", "report_path", "appearance_policy",
+                                                   "benchmark_policy", "promoted_to_verified")}
+            if "context_fixture" in result:
+                compact["context_fixture"] = {key: result["context_fixture"][key] for key in ("artifact_hash", "artifact_path", "integrity")}
+            return compact
         with database(config.knowledge_db) as db:
             return [dict(row) for row in db.execute("SELECT id,family,version,status FROM recipes ORDER BY id")]
     if args.command == "scene":
-        from .scene import PlayerStart, SceneChange, StairSpec
         from .workspace import (apply_scene_changes, create_scene, diff_scene, inspect_scene,
-                                scene_from_dict, scene_to_dict, undo_scene)
+                                scene_from_dict, scene_to_dict, scene_change_from_dict, undo_scene)
         with database(config.workspace_db, workspace=True) as db:
             if args.action == "create":
                 scene = scene_from_dict(json.loads(args.file.read_text(encoding="utf-8-sig")))
@@ -196,12 +215,7 @@ def dispatch(args: argparse.Namespace) -> object:
                     scenes.append(scene_from_dict(json.loads(row[0])))
                 return diff_scene(*scenes)
             values = json.loads(args.file.read_text(encoding="utf-8-sig"))
-            changes = []
-            for value in values:
-                cls = PlayerStart if value["operation"] == "set_player_start" else StairSpec
-                changes.append(SceneChange(value["operation"], value["object_id"],
-                                           cls(**value["expected"]) if value.get("expected") is not None else None,
-                                           cls(**value["value"]) if value.get("value") is not None else None))
+            changes = [scene_change_from_dict(value) for value in values]
             result = apply_scene_changes(db, args.id, tuple(changes), expected_revision=args.expected_revision,
                                          dry_run=args.dry_run)
             return {"scene": scene_to_dict(result.scene), "changed_ids": result.changed_ids, "committed": result.committed}

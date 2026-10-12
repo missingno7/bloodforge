@@ -146,7 +146,7 @@ def _wall_material(source: NativeMap, source_indices: list[int], reconstructed: 
     common_edges = set(source_edges) & set(reconstructed_edges)
     matched = sum(source_edges[edge] == reconstructed_edges[edge] for edge in common_edges)
     return {
-        "scope": "primary wall picnum only; palette, shade, panning, repeats, overpicnum, and rendered appearance are not compared",
+        "scope": "This subsection reports primary wall picnum only; other native wall fields are reported under native_surface.",
         "partial": True,
         "source_tile_histogram": {str(k): v for k, v in sorted(Counter(source_tiles).items())},
         "reconstructed_tile_histogram": {str(k): v for k, v in sorted(Counter(reconstructed_tiles).items())},
@@ -158,20 +158,211 @@ def _wall_material(source: NativeMap, source_indices: list[int], reconstructed: 
     }
 
 
+_PLANE_FIELDS = {
+    "floor": {
+        "tile": "floorpicnum", "stat": "floorstat", "shade": "floorshade",
+        "pal": "floorpal", "xpan": "floorxpanning", "ypan": "floorypanning",
+    },
+    "ceiling": {
+        "tile": "ceilingpicnum", "stat": "ceilingstat", "shade": "ceilingshade",
+        "pal": "ceilingpal", "xpan": "ceilingxpanning", "ypan": "ceilingypanning",
+    },
+}
+_WALL_FIELDS = (
+    "picnum", "overpicnum", "cstat", "shade", "pal", "xrepeat", "yrepeat",
+    "xpanning", "ypanning",
+)
+
+
+def _native_plane_values(sector: Any, plane: str) -> dict[str, int]:
+    return {label: int(getattr(sector, name)) for label, name in _PLANE_FIELDS[plane].items()}
+
+
+def _wall_side_records(level: NativeMap, sector_index: int) -> dict[tuple[str, str], tuple[int, Any]]:
+    """Map each rectangular side and its directed orientation to a wall record."""
+    points, error = _sector_polygon(level, sector_index)
+    if points is None or error:
+        return {}
+    bounds = _rectangular_bounds(points)["bounds"]
+    if bounds is None:
+        return {}
+    sector = level.sectors[sector_index]
+    records: dict[tuple[str, str], tuple[int, Any]] = {}
+    for wall_index in range(sector.wallptr, sector.wallptr + sector.wallnum):
+        wall = level.walls[wall_index]
+        if not 0 <= wall.point2 < len(level.walls):
+            continue
+        endpoint = level.walls[wall.point2]
+        dx, dy = endpoint.x - wall.x, endpoint.y - wall.y
+        if dy == 0 and wall.y == bounds["min_y"]:
+            side = "north"
+        elif dx == 0 and wall.x == bounds["max_x"]:
+            side = "east"
+        elif dy == 0 and wall.y == bounds["max_y"]:
+            side = "south"
+        elif dx == 0 and wall.x == bounds["min_x"]:
+            side = "west"
+        else:
+            continue
+        if dx > 0:
+            direction = "east"
+        elif dx < 0:
+            direction = "west"
+        elif dy > 0:
+            direction = "south"
+        elif dy < 0:
+            direction = "north"
+        else:
+            continue
+        records[(side, direction)] = (wall_index, wall)
+    return records
+
+
+def _external_portals(level: NativeMap, indices: list[int]) -> tuple[list[dict[str, Any]], int]:
+    local = {sector_index: ordinal for ordinal, sector_index in enumerate(indices)}
+    records: list[dict[str, Any]] = []
+    invalid = 0
+    for sector_index in indices:
+        if not 0 <= sector_index < len(level.sectors):
+            continue
+        sector = level.sectors[sector_index]
+        start, end = sector.wallptr, sector.wallptr + sector.wallnum
+        if start < 0 or end > len(level.walls):
+            invalid += 1
+            continue
+        for wall_index in range(start, end):
+            wall = level.walls[wall_index]
+            if wall.nextsector < 0 or wall.nextsector in local:
+                continue
+            if not 0 <= wall.point2 < len(level.walls) or not 0 <= wall.nextwall < len(level.walls):
+                invalid += 1
+                continue
+            end_wall = level.walls[wall.point2]
+            back = level.walls[wall.nextwall]
+            reciprocal = back.nextwall == wall_index and back.nextsector == sector_index
+            reversed_edge = False
+            if 0 <= back.point2 < len(level.walls):
+                back_end = level.walls[back.point2]
+                reversed_edge = ((wall.x, wall.y) == (back_end.x, back_end.y)
+                                 and (end_wall.x, end_wall.y) == (back.x, back.y))
+            records.append({
+                "step_index": local[sector_index],
+                "start": [wall.x, wall.y],
+                "end": [end_wall.x, end_wall.y],
+                "outside_sector_index": wall.nextsector,
+                "reciprocal": reciprocal,
+                "reversed_edge": reversed_edge,
+            })
+            if not reciprocal or not reversed_edge:
+                invalid += 1
+    records.sort(key=lambda item: (item["step_index"], item["start"], item["end"], item["outside_sector_index"]))
+    return records, invalid
+
+
+def _surface_comparison(source: NativeMap, source_index: int, reconstructed: NativeMap,
+                        reconstructed_index: int, step: int) -> dict[str, Any]:
+    if not (0 <= source_index < len(source.sectors) and 0 <= reconstructed_index < len(reconstructed.sectors)):
+        return {"step_index": step, "available": False, "reason": "sector index is out of bounds"}
+    source_sector = source.sectors[source_index]
+    reconstructed_sector = reconstructed.sectors[reconstructed_index]
+    planes: dict[str, Any] = {}
+    for plane in ("floor", "ceiling"):
+        source_values = _native_plane_values(source_sector, plane)
+        reconstructed_values = _native_plane_values(reconstructed_sector, plane)
+        source_stat = source_values["stat"]
+        reconstructed_stat = reconstructed_values["stat"]
+        relative = bool((source_stat | reconstructed_stat) & 64)
+        def first_wall(level: NativeMap, sector: Any) -> Any | None:
+            start, count = sector.wallptr, sector.wallnum
+            if start < 0 or count <= 0 or start + count > len(level.walls):
+                return None
+            wall = level.walls[start]
+            return wall if start <= wall.point2 < start + count else None
+
+        source_first = first_wall(source, source_sector)
+        reconstructed_first = first_wall(reconstructed, reconstructed_sector)
+        anchor_match = None
+        if relative:
+            if source_first is None or reconstructed_first is None:
+                anchor_match = False
+            else:
+                source_endpoint = source.walls[source_first.point2] if 0 <= source_first.point2 < len(source.walls) else None
+                reconstructed_endpoint = (reconstructed.walls[reconstructed_first.point2]
+                                          if 0 <= reconstructed_first.point2 < len(reconstructed.walls) else None)
+                anchor_match = bool(source_endpoint and reconstructed_endpoint
+                    and (source_first.x, source_first.y, source_endpoint.x, source_endpoint.y)
+                    == (reconstructed_first.x, reconstructed_first.y,
+                        reconstructed_endpoint.x, reconstructed_endpoint.y))
+        planes[plane] = {
+            "source": source_values,
+            "reconstructed": reconstructed_values,
+            "field_matches": {field: source_values[field] == reconstructed_values[field] for field in source_values},
+            "relative_alignment_enabled": relative,
+            "first_wall_orientation_and_anchor_match": anchor_match,
+        }
+    source_walls = _wall_side_records(source, source_index)
+    reconstructed_walls = _wall_side_records(reconstructed, reconstructed_index)
+    source_keys, reconstructed_keys = set(source_walls), set(reconstructed_walls)
+    matched_keys = source_keys & reconstructed_keys
+    wall_fields: dict[str, Any] = {}
+    for field in _WALL_FIELDS:
+        field_rows = []
+        for key in sorted(matched_keys):
+            source_wall_index, source_wall = source_walls[key]
+            reconstructed_wall_index, reconstructed_wall = reconstructed_walls[key]
+            source_value, reconstructed_value = getattr(source_wall, field), getattr(reconstructed_wall, field)
+            field_rows.append({
+                "step_index": step, "side": key[0], "direction": key[1],
+                "source_wall_index": source_wall_index,
+                "reconstructed_wall_index": reconstructed_wall_index,
+                "source": source_value, "reconstructed": reconstructed_value,
+                "match": source_value == reconstructed_value,
+            })
+        matches = sum(row["match"] for row in field_rows)
+        wall_fields[field] = {
+            "compared_directed_edges": len(field_rows),
+            "exact_matches": matches,
+            "exact_fraction": matches / len(field_rows) if field_rows else None,
+            "mismatches": [row for row in field_rows if not row["match"]],
+        }
+    return {
+        "step_index": step,
+        "available": True,
+        "planes": planes,
+        "wall_directed_edge_correspondence": {
+            "source_edges": len(source_keys),
+            "reconstructed_edges": len(reconstructed_keys),
+            "matched_edges": len(matched_keys),
+            "source_edges_without_correspondence": [list(key) for key in sorted(source_keys - reconstructed_keys)],
+            "reconstructed_edges_without_correspondence": [list(key) for key in sorted(reconstructed_keys - source_keys)],
+            "fields": wall_fields,
+        },
+        "visibility": {
+            "source": source_sector.visibility,
+            "reconstructed": reconstructed_sector.visibility,
+            "match": source_sector.visibility == reconstructed_sector.visibility,
+        },
+    }
+
+
 def compare_stair(source: NativeMap, source_sector_indices: list[int],
-                  reconstructed: NativeMap) -> dict[str, Any]:
+                  reconstructed: NativeMap,
+                  reconstructed_sector_indices: list[int] | None = None) -> dict[str, Any]:
     """Compare a selected source stair run against a reconstructed native MAP.
 
-    ``source_sector_indices`` defines stair order. The reconstructed fragment
-    is compared by ordinal sector index (step 0 is reconstructed sector 0,
-    etc.), matching the current compiler's standalone fragment output.
-    Source portals to sectors outside the selected run are treated as fragment
-    boundaries and reported as omitted external connections.
+    ``source_sector_indices`` defines stair order. Without explicit output
+    indices, compare the standalone fragment using sector ordinals 0..N-1.
+    With ``reconstructed_sector_indices``, compare those selected records in
+    order and treat other output sectors as retained context.
     """
     if not isinstance(source_sector_indices, list):
         raise TypeError("source_sector_indices must be a list of sector indices")
     source_indices = [int(index) for index in source_sector_indices]
-    reconstructed_indices = list(range(len(source_indices)))
+    context_retained = reconstructed_sector_indices is not None
+    if context_retained and not isinstance(reconstructed_sector_indices, list):
+        raise TypeError("reconstructed_sector_indices must be a list of sector indices or None")
+    reconstructed_indices = ([int(index) for index in reconstructed_sector_indices]
+                             if context_retained else list(range(len(source_indices))))
     comparisons: list[dict[str, Any]] = []
     floor_errors: list[int] = []
     ceiling_errors: list[int] = []
@@ -181,9 +372,10 @@ def compare_stair(source: NativeMap, source_sector_indices: list[int],
     valid_comparable_steps = 0
     dimension_matches = 0
     xy_errors: list[int] = []
+    surface_comparisons: list[dict[str, Any]] = []
 
     for step, source_index in enumerate(source_indices):
-        reconstructed_index = step
+        reconstructed_index = reconstructed_indices[step] if step < len(reconstructed_indices) else -1
         source_points, source_error = _sector_polygon(source, source_index)
         reconstructed_points, reconstructed_error = _sector_polygon(reconstructed, reconstructed_index)
         source_rect = _rectangular_bounds(source_points)
@@ -208,7 +400,8 @@ def compare_stair(source: NativeMap, source_sector_indices: list[int],
         dimension_matches += dimensions_match
 
         source_sector = source.sectors[source_index] if 0 <= source_index < len(source.sectors) else None
-        reconstructed_sector = reconstructed.sectors[reconstructed_index] if reconstructed_index < len(reconstructed.sectors) else None
+        reconstructed_sector = (reconstructed.sectors[reconstructed_index]
+                                if 0 <= reconstructed_index < len(reconstructed.sectors) else None)
         floor_error = abs(source_sector.floorz - reconstructed_sector.floorz) if source_sector and reconstructed_sector else None
         ceiling_error = abs(source_sector.ceilingz - reconstructed_sector.ceilingz) if source_sector and reconstructed_sector else None
         if floor_error is not None:
@@ -235,6 +428,8 @@ def compare_stair(source: NativeMap, source_sector_indices: list[int],
             "floor_tile_match": (source_sector.floorpicnum == reconstructed_sector.floorpicnum) if source_sector and reconstructed_sector else None,
             "ceiling_tile_match": (source_sector.ceilingpicnum == reconstructed_sector.ceilingpicnum) if source_sector and reconstructed_sector else None,
         })
+        surface_comparisons.append(_surface_comparison(source, source_index, reconstructed,
+                                                       reconstructed_index, step))
 
     source_topology = _internal_portals(source, source_indices)
     reconstructed_topology = _internal_portals(reconstructed, reconstructed_indices)
@@ -242,15 +437,86 @@ def compare_stair(source: NativeMap, source_sector_indices: list[int],
     topology_matches = (graph_matches and source_topology["reciprocal_consistent"]
                        and reconstructed_topology["reciprocal_consistent"]
                        and source_topology["directed_links"] == reconstructed_topology["directed_links"])
-    external_lost = source_topology["external_portal_count"]
-    count_matches = len(source_indices) == len(reconstructed.sectors)
+    source_external, source_external_invalid = _external_portals(source, source_indices)
+    reconstructed_external, reconstructed_external_invalid = _external_portals(reconstructed, reconstructed_indices)
+    if context_retained:
+        def ext_key(record: dict[str, Any]) -> tuple[Any, ...]:
+            return (record["step_index"], tuple(record["start"]), tuple(record["end"]),
+                    record["outside_sector_index"], record["reciprocal"], record["reversed_edge"])
+        source_external_keys = {ext_key(record) for record in source_external
+                                if record["reciprocal"] and record["reversed_edge"]}
+        reconstructed_external_keys = {ext_key(record) for record in reconstructed_external
+                                       if record["reciprocal"] and record["reversed_edge"]}
+        external_exact = len(source_external_keys & reconstructed_external_keys)
+        external_fraction = (external_exact / len(source_external) if source_external
+                             else (1.0 if not reconstructed_external_keys else 0.0))
+        external_lost = max(0, len(source_external) - external_exact)
+    else:
+        external_exact = None
+        external_fraction = None
+        external_lost = len(source_external)
+    external_portal_comparison = {
+        "mode": "retained_context_exact" if context_retained else "standalone_excluded",
+        "source_connections": len(source_external),
+        "reconstructed_connections": len(reconstructed_external) if context_retained else None,
+        "exact_matches": external_exact,
+        "exact_fraction": external_fraction,
+        "source_invalid_connections": source_external_invalid,
+        "reconstructed_invalid_connections": reconstructed_external_invalid if context_retained else None,
+        "source_records": source_external,
+        "reconstructed_records": reconstructed_external if context_retained else None,
+    }
+    count_matches = (len(source_indices) == len(reconstructed_indices) if context_retained
+                     else len(source_indices) == len(reconstructed.sectors))
     floor_fraction = floor_tile_matches / valid_comparable_steps if valid_comparable_steps else None
     ceiling_fraction = ceiling_tile_matches / valid_comparable_steps if valid_comparable_steps else None
     total = len(source_indices)
+    plane_appearance: dict[str, Any] = {}
+    for plane in ("floor", "ceiling"):
+        plane_appearance[plane] = {}
+        fields = list(_PLANE_FIELDS[plane]) + ["first_wall_orientation_and_anchor_match"]
+        for field in fields:
+            rows = []
+            for item in surface_comparisons:
+                if not item.get("available"):
+                    continue
+                plane_item = item["planes"][plane]
+                if field == "first_wall_orientation_and_anchor_match":
+                    if plane_item["relative_alignment_enabled"]:
+                        rows.append(plane_item[field])
+                else:
+                    rows.append(plane_item["field_matches"][field])
+            matches = sum(value is True for value in rows)
+            plane_appearance[plane][field] = {
+                "exact_matches": matches,
+                "compared": len(rows),
+                "exact_fraction": matches / len(rows) if rows else None,
+            }
+    wall_appearance: dict[str, Any] = {}
+    for field in _WALL_FIELDS:
+        rows = [row for item in surface_comparisons if item.get("available")
+                for row in item["wall_directed_edge_correspondence"]["fields"][field]["mismatches"]]
+        compared = sum(item["wall_directed_edge_correspondence"]["fields"][field]["compared_directed_edges"]
+                       for item in surface_comparisons if item.get("available"))
+        matches = compared - len(rows)
+        wall_appearance[field] = {
+            "exact_matches": matches,
+            "compared_directed_edges": compared,
+            "exact_fraction": matches / compared if compared else None,
+            "mismatches": rows,
+        }
+    visibility_rows = [item["visibility"]["match"] for item in surface_comparisons if item.get("available")]
+    visibility_matches = sum(value is True for value in visibility_rows)
+    visibility_appearance = {
+        "exact_matches": visibility_matches,
+        "compared": len(visibility_rows),
+        "exact_fraction": visibility_matches / len(visibility_rows) if visibility_rows else None,
+    }
     return {
         "source_sector_indices": source_indices,
         "reconstructed_sector_indices": reconstructed_indices,
         "sector_count_matches": count_matches,
+        "comparison_mode": "retained_context" if context_retained else "standalone_fragment",
         "sector_comparisons": comparisons,
         "geometry": {
             "exact_polygon_matches": polygon_matches,
@@ -267,13 +533,22 @@ def compare_stair(source: NativeMap, source_sector_indices: list[int],
             "internal_topology_matches": topology_matches,
             "source": source_topology,
             "reconstructed": reconstructed_topology,
-            "source_external_connections_excluded": True,
+            "source_external_connections_excluded": not context_retained,
             "source_external_connections_lost": external_lost,
-            "note": "Source links outside the selected stair sector set are fragment boundaries and are not required in the reconstruction.",
+            "external_portal_comparison": external_portal_comparison,
+            "note": ("External links are compared against retained context sectors." if context_retained else
+                     "Source links outside the selected stair sector set are fragment boundaries and are not required in a standalone reconstruction."),
         },
         "floor_tile_exact_fraction": floor_fraction,
         "ceiling_tile_exact_fraction": ceiling_fraction,
         "wall_material": _wall_material(source, source_indices, reconstructed, reconstructed_indices),
+        "native_surface": {
+            "per_step": surface_comparisons,
+            "plane_field_comparisons": plane_appearance,
+            "visibility_comparison": visibility_appearance,
+            "wall_directed_edge_field_comparisons": wall_appearance,
+            "scope": "Exact native fields only; this does not model renderer interpretation or pixel appearance.",
+        },
         "runtime_verified": False,
         "visual_verified": False,
         "claims": ["Native structural comparison only; no renderer, runtime traversal, or playability claim."],

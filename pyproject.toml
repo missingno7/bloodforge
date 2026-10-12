@@ -9,6 +9,9 @@ description = "Evidence-driven Blood MAP v7 analysis and construction"
 requires-python = ">=3.12"
 dependencies = []
 
+[project.optional-dependencies]
+visual = ["Pillow>=10"]
+
 [project.scripts]
 bloodforge = "bloodforge.cli:main"
 

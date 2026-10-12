@@ -9,11 +9,14 @@ from typing import Any
 from .compiler import compile_scene
 from .scene import (
     LevelScene,
+    PlaneMaterial,
     PlayerStart,
     SceneChange,
     SceneError,
     StairSpec,
+    StepAppearance,
     TransactionResult,
+    WallMaterial,
     apply_changes,
 )
 from .store import canonical_json
@@ -39,7 +42,7 @@ def scene_from_dict(value: object) -> LevelScene:
     if not isinstance(value["stairs"], list):
         raise WorkspaceError("scene stairs must be a list")
     try:
-        stairs = tuple(StairSpec(**item) if isinstance(item, dict) else _bad_stair()
+        stairs = tuple(stair_from_dict(item) if isinstance(item, dict) else _bad_stair()
                        for item in value["stairs"])
         player_value = value["player_start"]
         player = PlayerStart(**player_value) if isinstance(player_value, dict) else None
@@ -52,6 +55,56 @@ def scene_from_dict(value: object) -> LevelScene:
 
 def _bad_stair():
     raise WorkspaceError("each stair must be an object")
+
+
+def stair_from_dict(value: dict[str, Any]) -> StairSpec:
+    """Decode both legacy stairs and JSON scene stairs with appearance data."""
+    fields = dict(value)
+    appearance = fields.get("appearance")
+    if appearance is not None:
+        if not isinstance(appearance, (list, tuple)):
+            raise WorkspaceError("stair appearance must be a list, tuple, or null")
+        decoded = []
+        for item in appearance:
+            if not isinstance(item, dict):
+                raise WorkspaceError("each step appearance must be an object")
+            step = dict(item)
+            for key in ("floor", "ceiling"):
+                if not isinstance(step.get(key), dict):
+                    raise WorkspaceError(f"step {key} material must be an object")
+                step[key] = PlaneMaterial(**step[key])
+            for key in ("north", "east", "south", "west"):
+                if not isinstance(step.get(key), dict):
+                    raise WorkspaceError(f"step {key} material must be an object")
+                step[key] = WallMaterial(**step[key])
+            decoded.append(StepAppearance(**step))
+        fields["appearance"] = tuple(decoded)
+    return StairSpec(**fields)
+
+
+def scene_change_from_dict(value: object) -> SceneChange:
+    """Decode CLI/workspace change JSON, including nested material values."""
+    if not isinstance(value, dict):
+        raise WorkspaceError("scene change must be an object")
+    operation = value.get("operation")
+    object_id = value.get("object_id")
+    if not isinstance(operation, str) or not isinstance(object_id, str):
+        raise WorkspaceError("scene change requires operation and object_id strings")
+
+    def decode(part: object) -> StairSpec | PlayerStart | None:
+        if part is None:
+            return None
+        if not isinstance(part, dict):
+            raise WorkspaceError("scene change values must be objects or null")
+        if operation == "set_player_start":
+            return PlayerStart(**part)
+        return stair_from_dict(part)
+
+    try:
+        return SceneChange(operation, object_id, decode(value.get("expected")),
+                           decode(value.get("value")))
+    except (TypeError, SceneError) as exc:
+        raise WorkspaceError(f"invalid scene change: {exc}") from exc
 
 
 def _load(db: sqlite3.Connection, project_id: str, revision: int | None = None) -> LevelScene:

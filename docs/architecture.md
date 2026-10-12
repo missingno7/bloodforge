@@ -76,7 +76,8 @@ Generated/conversion/unknown identities cannot donate construction evidence,
 including conflicting SHA aliases. Author metadata is preserved on rescan.
 
 `fidelity.py` independently follows emitted native point2 loops and compares
-polygons, Z values, internal portal topology and selected material fields.
+polygons, Z values, internal portal topology and complete supported native
+plane/wall appearance fields, including relative-alignment anchors.
 It does not call the detector or compiler. The isolated fragment closes external
 portals; lost context is counted. Out-of-domain cases remain failures to cover,
 not silently discarded examples. Distinct result content appends validation
@@ -88,6 +89,23 @@ assumptions remain explicitly partial. XMapEdit rendering is independent visual
 evidence; NBlood initialization is a different claim from interaction or play.
 Neither promotes a recipe automatically. There is no aggregate quality score.
 
+`reconstruction.py` adds a separate, explicitly post-hoc fitted diagnostic:
+surface settings come from the held-out target, geometry from the trusted
+recipe. `StepAppearance` stays inside `LevelScene`; the compiler owns native
+record numbering and translates cardinal wall identities after anchor rotation.
+`fixture.py` is evaluation apparatus only. It rejects footprint, first-wall,
+height or topology mismatch before inserting the compiled fragment into a
+source-held-fixed map. It restores native links to original context, never
+overwrites generated surfaces with source surfaces, and audits unchanged
+outside sectors/walls/sprites. It does not introduce another authoring model.
+
+`visual_fidelity.py` checks observation identities and matching controlled
+poses before comparing PNG pixels. Fitted visual reports join the immutable
+benchmark history only after their MAP hashes and indexed reconstruction
+report agree. Native field fidelity, static rendered fidelity and behavioral
+verification remain distinct. The unfinished NBlood bot is quarantined as an
+experimental diagnostic; its output cannot establish traversal or promotion.
+
 ## Dependencies and current limits
 
 Python 3.12 and SQLite/FTS5 are sufficient. Established geometry/graph/imaging
@@ -98,6 +116,7 @@ polygon unions/intersections, evaluate GEOS/Shapely instead of hand-building
 that machinery. Use a graph library when graph matching exceeds these bounded
 adjacency operations. The optional external tools keep their own versions and
 content fingerprints in evidence.
+Pixel comparisons now use optional Pillow rather than a custom PNG decoder.
 
 The present database is about 1.25 GB for 4.55 million native records and
 1.23 million observations. Repeating SHA strings and portal JSON is measurable

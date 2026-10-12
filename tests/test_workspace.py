@@ -2,7 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bloodforge.scene import LevelScene, PlayerStart, SceneChange, SceneError, StairSpec
+from bloodforge.scene import (LevelScene, PlaneMaterial, PlayerStart, SceneChange,
+                              SceneError, StairSpec, StepAppearance, WallMaterial)
 from bloodforge.store import database
 from bloodforge.workspace import (
     WorkspaceError,
@@ -12,6 +13,7 @@ from bloodforge.workspace import (
     inspect_scene,
     scene_from_dict,
     scene_to_dict,
+    scene_change_from_dict,
     undo_scene,
 )
 
@@ -42,6 +44,27 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(diff_scene(self.initial, changed), ("stair/stairs",))
         changed_start = LevelScene((stair(),), PlayerStart(400, 700, 4096, stair_id="stairs"), 1)
         self.assertEqual(diff_scene(self.initial, changed_start), ("player_start",))
+
+    def test_appearance_scene_json_change_decode_and_transaction_roundtrip(self):
+        appearance = tuple(StepAppearance(
+            floor=PlaneMaterial(tile=30 + i, shade=-1),
+            ceiling=PlaneMaterial(tile=40 + i),
+            north=WallMaterial(tile=50 + i), east=WallMaterial(tile=60 + i),
+            south=WallMaterial(tile=70 + i), west=WallMaterial(tile=80 + i),
+            visibility=10 + i, first_wall="west") for i in range(3))
+        styled = stair(appearance=appearance)
+        scene = LevelScene((styled,), self.initial.player_start, revision=0)
+        document = scene_to_dict(scene)
+        restored = scene_from_dict(document)
+        self.assertEqual(restored, scene)
+        change_doc = {"operation": "set_stair", "object_id": "stairs",
+                      "expected": scene_to_dict(self.initial)["stairs"][0],
+                      "value": document["stairs"][0]}
+        change = scene_change_from_dict(change_doc)
+        self.assertEqual(change.value, styled)
+        result = apply_scene_changes(self.db, "demo", (change,), expected_revision=0)
+        self.assertEqual(result.scene.stairs[0].appearance, appearance)
+        self.assertEqual(inspect_scene(self.db, "demo"), result.scene)
 
     def test_dry_run_does_not_write_revision(self):
         change = SceneChange("set_stair", "stairs", stair(), stair(count=4))

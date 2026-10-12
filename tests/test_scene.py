@@ -4,10 +4,13 @@ from bloodforge.compiler import SceneCompileError, compile_scene
 from bloodforge.native import encode_map, parse_map
 from bloodforge.scene import (
     LevelScene,
+    PlaneMaterial,
     PlayerStart,
     SceneChange,
     SceneError,
     StairSpec,
+    StepAppearance,
+    WallMaterial,
     apply_changes,
     rollback_changes,
 )
@@ -39,6 +42,20 @@ class SceneModelTests(unittest.TestCase):
             StairSpec(**{**sample_stair().__dict__, "floor_tile": 32768})
         with self.assertRaises(SceneError):
             StairSpec(**{**sample_stair().__dict__, "count": True})
+
+    def test_step_appearance_requires_exact_count_and_native_visual_ranges(self):
+        appearance = StepAppearance(floor=PlaneMaterial(tile=21, stat=16),
+                                    north=WallMaterial(tile=31, flags=4),
+                                    first_wall="east")
+        self.assertEqual(appearance.floor.tile, 21)
+        with self.assertRaises(SceneError):
+            StairSpec(**{**sample_stair().__dict__, "appearance": (appearance,)})
+        with self.assertRaises(SceneError):
+            PlaneMaterial(stat=2)
+        with self.assertRaises(SceneError):
+            WallMaterial(flags=1)
+        with self.assertRaises(SceneError):
+            WallMaterial(tile=32768)
 
     def test_transaction_preconditions_dry_run_and_rollback(self):
         scene = LevelScene((sample_stair(),))
@@ -123,6 +140,43 @@ class SceneCompilerTests(unittest.TestCase):
         with self.assertRaises(SceneCompileError):
             second = StairSpec(**{**sample_stair("west").__dict__, "id": "second"})
             compile_scene(LevelScene((sample_stair(), second)))
+
+    def test_appearance_and_rotated_first_wall_keep_cardinal_portals_and_ids(self):
+        appearance = tuple(
+            StepAppearance(
+                floor=PlaneMaterial(tile=20 + i, shade=-i, palette=3,
+                                    xpanning=i, ypanning=4, stat=16),
+                ceiling=PlaneMaterial(tile=60 + i, shade=2, palette=5,
+                                      xpanning=6, ypanning=i),
+                north=WallMaterial(tile=100 + i, overlay=200 + i, shade=7,
+                                   palette=8, xrepeat=9, yrepeat=10,
+                                   xpanning=11, ypanning=12, flags=4),
+                east=WallMaterial(tile=110 + i, xrepeat=20 + i),
+                south=WallMaterial(tile=120 + i),
+                west=WallMaterial(tile=130 + i),
+                visibility=40 + i,
+                first_wall="east",
+            ) for i in range(3)
+        )
+        stair = StairSpec(**{**sample_stair().__dict__, "appearance": appearance})
+        result = compile_scene(LevelScene((stair,)))
+        native = result.native_map
+        self.assertEqual([sector.floorpicnum for sector in native.sectors], [20, 21, 22])
+        self.assertEqual([sector.ceilingpicnum for sector in native.sectors], [60, 61, 62])
+        self.assertEqual([sector.visibility for sector in native.sectors], [40, 41, 42])
+        self.assertEqual(native.walls[0].picnum, 110)
+        self.assertEqual(native.walls[0].xrepeat, 20)
+        self.assertEqual(native.walls[1].picnum, 120)
+        self.assertEqual(native.walls[2].picnum, 130)
+        self.assertEqual(native.walls[3].picnum, 100)
+        self.assertEqual(result.object_map["stair/entry/step/0000/wall/north"], ("wall", 3))
+        east = result.object_map["stair/entry/step/0000/wall/east"][1]
+        west_next = result.object_map["stair/entry/step/0001/wall/west"][1]
+        self.assertEqual(native.walls[east].nextwall, west_next)
+        self.assertEqual(native.walls[west_next].nextwall, east)
+        decoded = parse_map(encode_map(native))
+        self.assertEqual(decoded.sectors[0].floorstat, 16)
+        self.assertEqual(decoded.walls[east].picnum, 110)
 
 
 if __name__ == "__main__":

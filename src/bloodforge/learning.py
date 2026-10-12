@@ -228,7 +228,7 @@ def evaluate_recipe(config: Config, recipe_id: str) -> dict:
                       "source_portal_walls": evidence["portal_wall_ids"], "recipe_id": recipe_id,
                       "split_group": split["groups"][row["sha256"]], "parameters": params,
                       "manual_interventions": 0, "limitations": LIMITATIONS,
-                      "evaluation_version": "rect-fidelity-1"}
+                      "evaluation_version": "rect-fidelity-2"}
             artifact_hash = ""
             try:
                 if row["sha256"] not in eligible_now:

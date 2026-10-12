@@ -75,3 +75,46 @@ def bundle_checkpoint(config: Config, benchmark_path: Path, comparison_path: Pat
     checkpoint.update(report)
     (config.data_root / "checkpoint.json").write_text(json.dumps(checkpoint, indent=2) + "\n", encoding="utf-8")
     return checkpoint
+
+
+def record_fitted_visual(config: Config, reconstruction_path: Path,
+                         source_observation: Path, candidate_observation: Path) -> dict:
+    """Append a paired-view diagnostic only when its recipe and MAP identities agree."""
+    from .visual_fidelity import compare_observations
+
+    reconstructed = json.loads(reconstruction_path.read_text(encoding="utf-8-sig"))
+    if reconstructed.get("schema") != "bloodforge.fitted-reconstruction.v1":
+        raise ValueError("expected a fitted reconstruction report")
+    # A report must already be in the append-only knowledge history. Do not
+    # attach observations to a hand-edited report with invented lineage.
+    with database(config.knowledge_db) as db:
+        known = db.execute("SELECT result_json FROM benchmarks WHERE id=?", (digest(reconstructed),)).fetchone()
+    if known is None or json.loads(known[0]) != reconstructed:
+        raise ValueError("reconstruction report is not an indexed benchmark result")
+    comparison = compare_observations(source_observation, candidate_observation)
+    actual_source = comparison["runs"]["source"]["map"]["sha256"]
+    actual_candidate = comparison["runs"]["candidate"]["map"]["sha256"]
+    if actual_source != reconstructed["source"]["sha256"]:
+        raise ValueError("paired source does not match reconstruction source identity")
+    fixture = reconstructed.get("context_fixture")
+    if fixture and actual_candidate == fixture["artifact_hash"]:
+        scope = "compiled stairs in source-held-fixed context; surrounding map, sprites and mechanisms are original"
+    elif actual_candidate == reconstructed["artifact_hash"]:
+        scope = "isolated fitted stair fragment"
+    else:
+        raise ValueError("paired candidate does not match a reconstruction output")
+    comparison["reconstruction"] = {"recipe_id": reconstructed["recipe_id"],
+                                    "pattern_id": reconstructed["pattern_id"], "scope": scope,
+                                    "benchmark_result_id": digest(reconstructed),
+                                    "reconstruction_report_path": str(reconstruction_path.resolve()),
+                                    "appearance_policy": reconstructed["appearance_policy"]}
+    saved = record_tool_evidence(config, comparison, "fitted-paired-visual-diagnostic")
+    augmented = dict(reconstructed)
+    augmented["visual"] = {"status": "compared", "scope": scope, "comparison": saved,
+                           "views": comparison["views"], "claims": comparison["claims"]}
+    with database(config.knowledge_db) as db, db:
+        db.execute("INSERT OR IGNORE INTO benchmarks(id,recipe_id,heldout_pattern_id,result_json,artifact_hash) VALUES(?,?,?,?,?)",
+                   (digest(augmented), augmented["recipe_id"], augmented["pattern_id"],
+                    canonical_json(augmented), augmented["artifact_hash"]))
+    return {"recipe_id": augmented["recipe_id"], "pattern_id": augmented["pattern_id"],
+            "scope": scope, "views": comparison["views"], "promoted_to_verified": False, **saved}
