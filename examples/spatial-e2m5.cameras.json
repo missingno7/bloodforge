@@ -1,0 +1,52 @@
+[
+  {
+    "id": "route_0000",
+    "x": -7040,
+    "y": -14080,
+    "z": -3072,
+    "angle": 1024,
+    "horiz": 100,
+    "sector": 10,
+    "screenshot": true
+  },
+  {
+    "id": "route_0001",
+    "x": -7296,
+    "y": -14080,
+    "z": -5120,
+    "angle": 1024,
+    "horiz": 100,
+    "sector": 12,
+    "screenshot": true
+  },
+  {
+    "id": "route_0002",
+    "x": -7552,
+    "y": -14080,
+    "z": -7168,
+    "angle": 1024,
+    "horiz": 100,
+    "sector": 13,
+    "screenshot": true
+  },
+  {
+    "id": "route_0003",
+    "x": -7808,
+    "y": -14080,
+    "z": -9216,
+    "angle": 1024,
+    "horiz": 100,
+    "sector": 15,
+    "screenshot": true
+  },
+  {
+    "id": "route_0004",
+    "x": -8064,
+    "y": -14080,
+    "z": -11264,
+    "angle": 1024,
+    "horiz": 100,
+    "sector": 14,
+    "screenshot": true
+  }
+]

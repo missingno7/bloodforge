@@ -1,0 +1,7 @@
+[
+  {"id":"approach","x":-7040,"y":-14080,"z":-3072,"angle":1024,"horiz":100,"sector":10},
+  {"id":"lower-step","x":-7296,"y":-14080,"z":-5120,"angle":1024,"horiz":100,"sector":12},
+  {"id":"middle-step","x":-7552,"y":-14080,"z":-7168,"angle":1024,"horiz":100,"sector":13},
+  {"id":"upper-step","x":-7808,"y":-14080,"z":-9216,"angle":1024,"horiz":100,"sector":15},
+  {"id":"arrival","x":-8064,"y":-14080,"z":-11264,"angle":1024,"horiz":100,"sector":14}
+]

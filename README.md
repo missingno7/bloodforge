@@ -6,14 +6,22 @@ discovers strict rectangular stair runs, infers parameter bounds from training
 maps, reconstructs held-out fragments, and records native, structural, visual,
 and runtime evidence separately. No LLM is required by the library or CLI.
 
+Spatial Understanding v1 adds source-backed continuity hypotheses, aperture and
+negative-space measurements, static viewpoint sequences and controlled edits
+on original maps. It separates sectors from possible perceived spaces, and
+renderer observations from navigation and design interpretations. See the
+[spatial evidence checkpoint](docs/spatial-understanding-v1.md).
+
 This is a foundation, not an autonomous full-level designer. See
 [the first milestone](docs/milestone.md), [surface reconstruction checkpoint](docs/surface-checkpoint.md), [architecture](docs/architecture.md),
 and [task ledger](docs/tasks.md).
 
 ## Run from this checkout
 
-The PowerShell launcher uses `BLOODFORGE_PYTHON`, the locally bundled Python
-3.12 runtime when available, or `python`. It does not install dependencies.
+The PowerShell launcher uses `BLOODFORGE_PYTHON`, the checkout's `.venv`, the
+locally bundled Python 3.12 runtime when available, or `python`. It does not
+install dependencies. Install `pip install -e ".[spatial,visual]"` in your Python
+environment for spatial geometry and image comparisons (Shapely and Pillow).
 Run commands from the repository root:
 
 ```powershell
@@ -28,6 +36,43 @@ $recipe = .\tools\bf.ps1 recipes infer | ConvertFrom-Json
 .\tools\bf.ps1 recipes evaluate $recipe.recipe_id
 .\tools\test.ps1
 ```
+
+## Inspect spatial relationships
+
+The spatial commands accept original irregular maps, independently of the
+rectangular construction compiler. Select native sectors as an explicit scope;
+derived groups may overlap across continuity views and are not room labels.
+
+```powershell
+$map = 'D:\Games\DOS\llmapper\maps\blood\campaign\E1M4.MAP'
+.\tools\bf.ps1 space inspect $map --sectors '156,335,333,314,152,210'
+.\tools\bf.ps1 space transitions $map --sectors '156,335,333,314,152,210'
+.\tools\bf.ps1 level observe $map --cameras examples\spatial-e1m4.cameras.json --output data\spatial-e1m4-new
+.\tools\bf.ps1 space inspect $map --sectors '156,335,333,314,152,210' --observation data\spatial-e1m4-new\summary.json --diagram data\spatial-e1m4.svg
+```
+
+`space viewpoints` samples a JSON waypoint sequence and rejects invalid or
+ambiguous camera positions. Explicit sector hints are required around some
+overlapping Build geometry. It validates sampled poses, not movement between
+them. `space intervene` takes a JSON object with `expected_source_sha256` and
+`edit`, creates a content-addressed copy and audits every changed native field.
+`space compare` pairs maps with preserved indexed XY loops and optionally
+`--before-views` / `--after-views` observer summaries. Reports retain native refs,
+assumptions and limits; no visibility is inferred from adjacency.
+
+Replay the three campaign examples and four frozen counterfactual predictions:
+
+```powershell
+$env:PYTHONPATH = 'src'
+.\.venv\Scripts\python.exe tools\spatial_demo.py --output data\spatial-v1-fresh
+```
+
+The output must be a fresh directory. `report.html` contains source-indexed
+top-down diagrams and controlled frames; `report.json` links the full evidence.
+`--reuse-recon` and `--reuse-run` can reuse earlier observer files only after
+rechecking live MAP, executable, resource, manifest, pose and image identities.
+The experiment plan is [spatial-interventions.json](examples/spatial-interventions.json).
+The bot is not used.
 
 `demo` performs ingestion, campaign mining, recipe inference and held-out
 evaluation in order. It returns compact JSON plus a content-addressed full

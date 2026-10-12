@@ -1,0 +1,11 @@
+{
+  "source": "campaign/E2M5.MAP",
+  "source_sha256": "50fc597e01989b6ac95abd0eedeb1eedbda0ecde65ac0161749aeb65589d806a",
+  "sectors": [9,10,11,12,13,14,15,16],
+  "cases": [
+    {"id":"close-opening","edit":{"kind":"close_portal","wall":77,"expect":{"nextwall":81,"nextsector":13}},"prediction":{"portal_pairs_removed":1,"pixel_change":true,"upper_stair_contribution_decreases_at_approach":true,"explanation":"Closing the middle stair portal preserves footprints and record counts but removes one native adjacency and reduces upper-stair renderer contributions at the first pose."}},
+    {"id":"lower-ceiling","edit":{"kind":"sector_ceiling","sector":13,"z":-8192},"prediction":{"portal_pairs_removed":0,"pixel_change":true,"opening_change":true,"explanation":"Lowering the middle tread ceiling reduces its static aperture and changes the view without changing XY geometry, floor area or portal adjacency."}},
+    {"id":"block-movement-flag","edit":{"kind":"block_portal","wall":77},"prediction":{"portal_pairs_removed":0,"pixel_change":false,"opening_change":true,"explanation":"Movement-blocking flags change a native movement constraint while the opaque rendered view and portal graph stay fixed. Runtime traversal remains untested."}},
+    {"id":"shade-control","edit":{"kind":"wall_shade","wall":77,"delta":8},"prediction":{"portal_pairs_removed":0,"pixel_change":true,"opening_change":false,"explanation":"A surface-shade intervention changes pixels while geometric continuity and aperture measurements remain invariant."}}
+  ]
+}

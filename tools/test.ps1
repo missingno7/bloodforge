@@ -2,8 +2,10 @@ $ErrorActionPreference = 'Stop'
 $projectDir = Split-Path -Parent $PSScriptRoot
 $pythonPath = $env:BLOODFORGE_PYTHON
 if (-not $pythonPath) {
+    $localPython = Join-Path $projectDir '.venv\Scripts\python.exe'
     $bundledPython = Join-Path $env:USERPROFILE '.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
-    if (Test-Path -LiteralPath $bundledPython) { $pythonPath = $bundledPython }
+    if (Test-Path -LiteralPath $localPython) { $pythonPath = $localPython }
+    elseif (Test-Path -LiteralPath $bundledPython) { $pythonPath = $bundledPython }
     else { $pythonPath = 'python' }
 }
 $oldPath = $env:PYTHONPATH

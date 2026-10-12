@@ -19,6 +19,37 @@ monotonic revision. Flat rectangular areas, derived stair-end landings and
 explicit shared-boundary connections compose in the same scene. Mechanism
 channel allocation is not implemented behind speculative interfaces.
 
+`spatial.py` adds a derived, source-hash-bound understanding layer without
+extending LevelScene or replacing MAP facts. Coplanar/broad-opening and finish
+continuity produce complementary, overlapping memberships, explicitly called
+hypotheses. The same native sector may participate in both; neither view is a
+room partition. Native aperture, floor/ceiling relations, movement flags, renderer
+flags and material matches remain independent observations.
+
+`spatial_geometry.py` uses Shapely/GEOS for irregular point2 polygons, holes,
+nested loops and XY overlaps. This optional dependency provides mature polygon
+operations; no source geometry is repaired. XY and Z are analyzed separately:
+Shapely is [planar](https://shapely.readthedocs.io/en/stable/manual.html#coordinate-systems).
+A slope flag with zero heinum uses the native base plane; nonzero slopes remain
+unsupported for camera Z and aperture evidence. Unmapped outside coordinates
+and polygon holes are not classified as solid material. Sector envelopes do
+not establish free player volume or intentional compositional emptiness.
+
+`spatial_views.py` joins independently observed native objects to hypotheses
+only after checking the exact source SHA, manifest, pose, executable, assets
+and image identities. It reports first appearance among sampled poses and
+successive visible-object changes. Renderer contributions can overcount pixels;
+they are not physical occupancy, distance or exclusive image coverage. Missing
+objects are not automatically occluded. A static pose sequence is not a route
+traversal or runtime state observation.
+
+`spatial_edits.py` performs bounded interventions on copied maps and audits every
+changed native field. The v1 comparison requires preserved native allocation
+and XY loops. Fixed-pose comparisons test frozen predictions about apertures,
+visibility and invariants, with a separate appearance-only control. Results
+remain counterfactual artifacts and cannot contaminate original-map evidence.
+See [the spatial checkpoint](spatial-understanding-v1.md).
+
 ## Storage
 
 `knowledge.db` uses schema version 1, an application ID, foreign keys, WAL,
@@ -27,6 +58,13 @@ and indexes for source identities, provenance, signatures and families.
 `contents` owns SHA-256 identities; `sources` owns current path metadata and
 `source_history` retains replaced identities/metadata. Tier copies remain
 separate source locations with `is_view=1`. One extraction serves all aliases.
+
+Spatial analyses reuse `observations` with extractor `spatial-understanding-1.0`,
+source SHA, and a scope/policy/geometry-engine-version key. No schema migration
+is needed. Generated counterfactuals are indexed only as workspace artifacts;
+they are not inserted as original corpus content. Full reports and observer
+images use the existing content-addressed artifact store. Prototype extractor
+results remain distinct from the released version rather than being overwritten.
 
 `workspace.db` separately owns semantic projects, revisions, operations and
 outputs. MAPs, full reports and PNGs live under `data/artifacts/<hash-prefix>/`.

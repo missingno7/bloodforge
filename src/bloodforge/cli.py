@@ -95,6 +95,27 @@ def _parser() -> argparse.ArgumentParser:
     checkpoint = commands.add_parser("checkpoint", help="link independent tool evidence by source and output hashes")
     for name in ("benchmark", "comparison", "source-observation", "reconstruction-observation", "runtime"):
         checkpoint.add_argument("--" + name, type=Path, required=True)
+    space = commands.add_parser("space", help="source-backed spatial relationships and sampled perception").add_subparsers(dest="action", required=True)
+    for name in ("inspect", "transitions"):
+        command = space.add_parser(name)
+        command.add_argument("map", type=Path)
+        command.add_argument("--sectors", type=str, help="comma-separated native sector selection; default whole map")
+        command.add_argument("--observation", type=Path, help="native observer summary for a controlled pose sequence")
+        command.add_argument("--diagram", type=Path, help="write source-indexed SVG diagram")
+    viewpoints = space.add_parser("viewpoints", help="sample static poses; does not verify a movement route")
+    viewpoints.add_argument("map", type=Path)
+    viewpoints.add_argument("--route", required=True, type=Path, help="JSON waypoint poses with explicit native sector hints")
+    viewpoints.add_argument("--samples", default=3, type=int, help="intervals per waypoint segment")
+    viewpoints.add_argument("--output", required=True, type=Path)
+    intervene = space.add_parser("intervene", help="create an audited counterfactual copy; never edits the source")
+    intervene.add_argument("map", type=Path)
+    intervene.add_argument("--spec", required=True, type=Path, help="JSON with expected_source_sha256 and edit")
+    compare = space.add_parser("compare", help="compare a known index-preserving intervention")
+    compare.add_argument("before", type=Path)
+    compare.add_argument("after", type=Path)
+    compare.add_argument("--sectors", required=True)
+    compare.add_argument("--before-views", type=Path)
+    compare.add_argument("--after-views", type=Path)
     return parser
 
 
@@ -153,6 +174,79 @@ def dispatch(args: argparse.Namespace) -> object:
         with database(config.knowledge_db), database(config.workspace_db, workspace=True):
             return {"knowledge_db": str(config.knowledge_db), "workspace_db": str(config.workspace_db),
                     "corpus_root": str(config.corpus_root), "schema_version": 1}
+    if args.command == "space":
+        from .spatial import inspect_space, compact_space, compare_spaces, diagram_svg, require_index_correspondence
+        from .native import read_map, encode_map
+        from .evidence import record_tool_evidence
+        import hashlib
+        sectors = [int(part.strip()) for part in args.sectors.split(",")] if getattr(args, "sectors", None) else None
+        if args.action in ("inspect", "transitions"):
+            result = inspect_space(config, args.map, sectors)
+            compact = compact_space(result)
+            cameras = []
+            if args.observation:
+                from .spatial_views import summarize_sequence
+                sequence = summarize_sequence(args.observation, result)
+                compact["perception"] = {
+                    "claims": sequence["claims"], "limitations": sequence["limitations"],
+                    "first_seen": sequence["first_seen"],
+                    "views": [{"id": view["id"], "camera": view["camera"],
+                               "visible_native_sectors": view["visible_native_sectors"],
+                               "visible_region_ids": [region["id"] for region in view["visible_regions"]]}
+                              for view in sequence["views"]],
+                    "transitions": [{key: row[key] for key in ("from_view", "to_view", "gained_native_sectors", "lost_native_sectors")}
+                                    for row in sequence["transitions"]],
+                    **record_tool_evidence(config, sequence, "spatial-perception")}
+                cameras = [view["camera"] | {"id": view["id"]} for view in sequence["views"]]
+            if args.diagram:
+                args.diagram.parent.mkdir(parents=True, exist_ok=True)
+                args.diagram.write_text(diagram_svg(read_map(args.map), result, cameras), encoding="utf-8")
+                compact["diagram"] = str(args.diagram.resolve())
+            if args.action == "transitions":
+                return {"source": result["source"], "openings": result["openings"], "transitions": result["transitions"],
+                        "report_path": result["report_path"], **({"perception": compact["perception"]} if "perception" in compact else {})}
+            return compact
+        if args.action == "viewpoints":
+            from .spatial_geometry import sample_route
+            waypoints = json.loads(args.route.read_text(encoding="utf-8-sig"))
+            cameras = sample_route(read_map(args.map), waypoints, args.samples)
+            for camera in cameras:
+                camera["screenshot"] = True
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(cameras, indent=2) + "\n", encoding="utf-8")
+            return {"map_sha256": hashlib.sha256(args.map.read_bytes()).hexdigest(),
+                    "cameras": cameras, "output": str(args.output.resolve()),
+                    "claim": "valid sampled static poses only; segment continuity and runtime movement unverified"}
+        if args.action == "intervene":
+            from .spatial_edits import intervene
+            spec = json.loads(args.spec.read_text(encoding="utf-8-sig"))
+            if set(spec) != {"expected_source_sha256", "edit"}:
+                raise ValueError("intervention spec requires expected_source_sha256 and edit")
+            before_hash = hashlib.sha256(args.map.read_bytes()).hexdigest()
+            if before_hash != spec["expected_source_sha256"]:
+                raise ValueError("intervention source SHA-256 precondition failed")
+            output, audit = intervene(read_map(args.map), spec["edit"])
+            sha, path = artifact_put(config.data_root, encode_map(output), ".map")
+            if hashlib.sha256(args.map.read_bytes()).hexdigest() != before_hash:
+                raise ValueError("source changed during intervention")
+            report = {"schema": "bloodforge.spatial-intervention.v1", "source_sha256": before_hash,
+                      "source_path": str(args.map.resolve()), "artifact_hash": sha, "artifact_path": str(path),
+                      "edit": spec["edit"], "audit": audit,
+                      "population": "controlled-counterfactual-not-independent-corpus-evidence"}
+            return report | record_tool_evidence(config, report, "spatial-intervention")
+        require_index_correspondence(read_map(args.before), read_map(args.after))
+        before, after = inspect_space(config, args.before, sectors), inspect_space(config, args.after, sectors)
+        comparison = compare_spaces(before, after)
+        if bool(args.before_views) != bool(args.after_views):
+            raise ValueError("paired observation comparison requires both --before-views and --after-views")
+        if args.before_views:
+            from .spatial_views import summarize_sequence, compare_sequences
+            from .visual_fidelity import compare_observations
+            comparison["perception"] = compare_sequences(summarize_sequence(args.before_views, before),
+                                                           summarize_sequence(args.after_views, after))
+            pixels = compare_observations(args.before_views, args.after_views)
+            comparison["pixels"] = pixels["views"]
+        return comparison | record_tool_evidence(config, comparison, "spatial-comparison")
     if args.command == "checkpoint":
         from .evidence import bundle_checkpoint
         result = bundle_checkpoint(config, args.benchmark, args.comparison, args.source_observation,

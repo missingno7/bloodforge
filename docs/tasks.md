@@ -24,22 +24,36 @@
   support, and semantic cameras bound to the compiled scene artifact.
 - Authored connected-area example: 10 sectors, nine portal pairs, four inspected
   native renders and NBlood initialization without the bot.
+- Spatial Understanding v1: irregular point2 polygons/holes, native apertures,
+  complementary continuity hypotheses, source-bound static-view sequences and
+  exact native-object joins through the independent renderer.
+- Three original campaign examples, four predicted counterfactual outcomes and
+  preserved invariants; a community holdout explicitly rejected by the current
+  geometry gate. See [measured spatial evidence](spatial-understanding-v1.md).
 
 ## Current bottlenecks
 
-1. Build a reliable input-and-position runtime harness independent of the
-   unfinished autonomous bot. Its inconsistent traces are quarantined as
-   diagnostics and must not gate correctness or promotion. Initialization alone
-   must not promote playability or step-height bounds.
-2. Extend independent geometry checks and add actual collision/clearance evidence.
-   The current 8192-Z threshold is a labelled heuristic.
-3. Learn context placement and appearance beyond authored flat rectangles.
-   Landings follow stair endpoints, but room placement, connections and materials
-   are explicit inputs; they are not yet selected by a learned grammar.
-4. Decode typed Blood extensions and build one tutorial-backed door/lift network;
+The active milestone is **Spatial Understanding v1 — Negative Space, Continuity,
+and Perception**, not another series of construction primitives. Native MAP
+facts, authored LevelScene intent, derived continuity hypotheses and observed
+perception remain separate.
+
+1. Refine continuity grouping through contrasting renderer evidence and explicit
+   region scope. Same planes or finishes alone do not establish perceived room
+   identity; sampled first visibility does not prove first visibility along a route.
+2. Support more native geometry/state cases without silently repairing source
+   facts: nonzero slopes, overlapping/degenerate loops, underwater state and
+   room-over-room mechanisms. Preserve the failed BLUDTOWN community holdout.
+3. Broaden independent spatial examples and counterfactuals without tuning on
+   held-out cases. Keep populations and duplicate groups apart.
+4. Translate supported spatial relationships into authored constraints before
+   adding construction vocabulary. Appearance and placement remain authored.
+5. Decode typed Blood extensions and build one tutorial-backed door/lift network;
    require activation and interaction evidence before promotion.
-5. Learn more than bounds: synthesize constrained compositions of trusted
-   primitives, with counterexamples and held-out structural/visual/runtime tests.
+6. Build reliable input-and-position runtime evidence independently of the
+   unfinished bot. This is a separate fidelity level, not a blocker for static
+   spatial understanding. Initialization and the 8192-Z clearance heuristic must
+   not promote playability or step-height bounds.
 
 ## Intentionally not claimed
 

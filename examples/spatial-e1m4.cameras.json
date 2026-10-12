@@ -1,0 +1,7 @@
+[
+  {"id":"e1m4-entry-s156","x":25369,"y":28214,"z":36096,"angle":1868,"horiz":100,"sector":156,"screenshot":true},
+  {"id":"e1m4-transition-s333","x":26514,"y":19017,"z":16384,"angle":1315,"horiz":100,"sector":333,"screenshot":true},
+  {"id":"e1m4-transition-s314","x":24832,"y":16384,"z":24576,"angle":1653,"horiz":100,"sector":314,"screenshot":true},
+  {"id":"e1m4-approach-s152","x":21897,"y":14099,"z":-1536,"angle":1385,"horiz":100,"sector":152,"screenshot":true},
+  {"id":"e1m4-hub-s210","x":14575,"y":13011,"z":7168,"angle":1954,"horiz":100,"sector":210,"screenshot":true}
+]
