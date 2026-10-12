@@ -8,7 +8,7 @@ import unittest
 
 from bloodforge.cli import main
 from bloodforge.compiler import compile_scene
-from bloodforge.native import NativeMap, encode_map, read_map
+from bloodforge.native import NativeMap, Sector, Wall, encode_map, read_map
 from bloodforge.scene import AreaSpec, ConnectionSpec, LevelScene, PortalEndpoint
 
 
@@ -82,6 +82,23 @@ class SpatialCliTests(unittest.TestCase):
         self.assertEqual(len(cameras), 1)
         self.assertEqual(cameras[0], {"id": "route_0000", "x": 50, "y": 50, "z": -6000,
                                       "angle": 0, "horiz": 100, "sector": 0, "screenshot": True})
+
+    def test_local_inspect_and_transitions_expose_global_failure(self):
+        damaged = read_map(self.source)
+        start = len(damaged.walls)
+        damaged.sectors.append(Sector(wallptr=start, wallnum=2))
+        damaged.walls.extend([Wall(x=1000, y=1000, point2=start+1),
+                              Wall(x=1001, y=1001, point2=start)])
+        self.source.write_bytes(encode_map(damaged))
+        self._run("space", "inspect", self.source, expected=2)
+        for command in ("inspect", "transitions"):
+            report = self._run("space", command, self.source, "--sectors", "0,1")
+            self.assertEqual(report["scope"]["selected_sectors"], [0, 1])
+            self.assertFalse(report["scope_validation"]["whole_map_structural_gate_passed"])
+            self.assertEqual(report["scope_validation"]["whole_map_error_count"], 2)
+            full = json.loads(Path(report["report_path"]).read_text())
+            self.assertEqual(full["scope_validation"]["whole_map_dimensions"]["geometry"]["error_count"], 2)
+            self.assertIsNone(full["whole_level"]["reciprocal_components"])
 
     def test_intervention_hash_precondition_persists_counterfactual_and_compare(self):
         original = read_map(self.source)

@@ -11,8 +11,9 @@ import unittest
 from bloodforge.config import Config
 from bloodforge.native import NativeMap, Sector, Wall, encode_map, write_map
 from bloodforge.spatial import (analyze_space, compare_spaces, inspect_space,
-                                require_index_correspondence)
+                                compact_space, require_index_correspondence)
 from bloodforge.store import database
+from bloodforge.validation import validate_map
 
 
 def _append_sector(level: NativeMap, points: list[tuple[int, int]], *,
@@ -88,6 +89,120 @@ def _blocked_expansion_map() -> NativeMap:
 class SpatialAnalysisTests(unittest.TestCase):
     def analyze(self, level: NativeMap, sectors: list[int] | None = None) -> dict:
         return analyze_space(level, "a" * 64, sectors)
+
+    def test_explicit_selection_retains_distant_failures_without_global_connectivity(self):
+        level = _three_strip_map()
+        _append_sector(level, [(1000, 1000), (1001, 1001)])
+        level.walls[12].nextwall = 999
+        original = copy.deepcopy(level)
+        structural = validate_map(level)
+        with self.assertRaisesRegex(ValueError, "geometry"):
+            self.analyze(level)
+        result = self.analyze(level, [0, 1])
+        proof = result["scope_validation"]
+        self.assertFalse(proof["whole_map_structural_gate_passed"])
+        self.assertEqual(proof["whole_map_error_count"], 3)
+        self.assertEqual(proof["whole_map_dimensions"]["geometry"]["issues"], structural["geometry"]["issues"])
+        self.assertEqual(proof["whole_map_dimensions"]["portals"]["issues"], structural["portals"]["issues"])
+        self.assertIsNone(result["whole_level"]["reciprocal_components"])
+        self.assertEqual(result["scope"]["neighbor_sectors"], [2])
+        self.assertEqual([s["xy_area"] for s in result["sectors"]], [10000, 10000])
+        self.assertEqual(len(result["openings"]), 2)
+        self.assertEqual(compact_space(result)["scope_validation"]["whole_map_error_count"], 3)
+        self.assertEqual(level, original)
+        self.assertEqual(validate_map(level), structural)
+
+    def test_selection_cannot_include_the_malformed_sector(self):
+        level = _three_strip_map()
+        _append_sector(level, [(1000, 1000), (1001, 1001)])
+        with self.assertRaisesRegex(ValueError, "selected geometry unsupported"):
+            self.analyze(level, [0, 3])
+
+    def test_selection_rejects_invalid_ids_before_deduplication(self):
+        for selected in ([], [1, True], [0, "1"], [-1], [999]):
+            with self.subTest(selected=selected), self.assertRaisesRegex(ValueError, "valid native sector"):
+                self.analyze(_three_strip_map(), selected)
+
+    def test_incoming_portal_corruption_cannot_hide_outside_selection(self):
+        for incoming in ("nextwall", "nextsector"):
+            with self.subTest(incoming=incoming):
+                level = _three_strip_map()
+                _append_sector(level, _rect(1000, 1000, 1100, 1100))
+                # The selected wall has no outgoing reference to sector 3.
+                setattr(level.walls[12], incoming, 0)
+                with self.assertRaisesRegex(ValueError, "invalid incident portal"):
+                    self.analyze(level, [0])
+
+    def test_selected_portal_requires_reciprocity_and_owned_reversed_endpoints(self):
+        for field, value in (("nextwall", -1), ("nextsector", 2), ("x", 101), ("point2", 0)):
+            with self.subTest(field=field):
+                level = _three_strip_map()
+                setattr(level.walls[7], field, value)
+                with self.assertRaisesRegex(ValueError, "selected boundary"):
+                    self.analyze(level, [0])
+
+    def test_global_native_and_wall_ownership_failures_remain_blocking(self):
+        for failure in ("native", "range", "overlap", "orphan"):
+            with self.subTest(failure=failure):
+                level = _three_strip_map()
+                if failure == "native":
+                    level.start_sector = 100
+                elif failure == "range":
+                    level.sectors[2].wallnum = 999
+                elif failure == "overlap":
+                    level.sectors[2].wallptr = 4
+                else:
+                    level.walls.append(Wall())
+                with self.assertRaisesRegex(ValueError, "native geometry/portals|wall ownership"):
+                    self.analyze(level, [0])
+
+    def test_degenerate_neighbor_retains_aperture_but_has_no_area_ratio(self):
+        level = _three_strip_map()
+        # Keep reciprocal shared segment 1 <-> 7 intact; collapse the neighbor's
+        # remote edge. Local aperture endpoints are still exact native evidence.
+        level.walls[6].x, level.walls[6].y = level.walls[5].x, level.walls[5].y
+        # Remove the second portal so the collapsed edge isn't itself incident.
+        for wi in (5, 11):
+            level.walls[wi].nextwall = level.walls[wi].nextsector = -1
+        result = self.analyze(level, [0])
+        opening, = result["openings"]
+        self.assertEqual(opening["width_xy"], 100)
+        self.assertEqual(opening["flat_opening_z"], 8192)
+        self.assertIsNone(opening["opening_width_to_smaller_area_scale"])
+        self.assertEqual(opening["endpoint_geometry"], [
+            {"sector": 0, "xy_polygon_supported": True, "flat_z_bounds_valid": True},
+            {"sector": 1, "xy_polygon_supported": False, "flat_z_bounds_valid": True}])
+        self.assertEqual(result["geometry_errors"][0]["sector"], 1)
+        self.assertFalse(result["scope_validation"]["whole_map_structural_gate_passed"])
+
+    def test_inverted_neighbor_z_remains_unknown_without_invalidating_selected_polygon(self):
+        level = _three_strip_map()
+        level.sectors[1].ceilingz = 10000
+        result = self.analyze(level, [0])
+        opening, = result["openings"]
+        self.assertIsNone(opening["flat_opening_z"])
+        self.assertFalse(opening["flat_positive_opening"])
+        self.assertEqual(opening["static_point_connection"], "unknown_invalid_z_bounds")
+        self.assertEqual(result["geometry_errors"][0]["sector"], 1)
+        with self.assertRaisesRegex(ValueError, "inverted ceiling/floor"):
+            self.analyze(level, [1])
+
+    def test_selection_on_higher_index_side_includes_lower_portal_peer(self):
+        result = self.analyze(_three_strip_map(), [2])
+        opening, = result["openings"]
+        self.assertEqual(opening["sectors"], [1, 2])
+        self.assertEqual(opening["walls"], [5, 11])
+        self.assertEqual(result["scope"]["neighbor_sectors"], [1])
+
+    def test_valid_global_adjacency_and_comparison_versions_are_explicit(self):
+        report = self.analyze(_three_strip_map(), [0])
+        self.assertEqual(report["whole_level"]["reciprocal_components"], [[0, 1, 2]])
+        self.assertTrue(report["scope_validation"]["whole_map_structural_gate_passed"])
+        for field, value in (("extractor", "older"), ("geometry_engine", {})):
+            altered = copy.deepcopy(report)
+            altered[field] = value
+            with self.assertRaisesRegex(ValueError, "same extractor and geometry engine"):
+                compare_spaces(report, altered)
 
     def test_coplanar_and_finish_views_are_complementary_hypotheses(self):
         report = self.analyze(_three_strip_map())
@@ -259,6 +374,12 @@ class SpatialAnalysisTests(unittest.TestCase):
             for row in rows:
                 self.assertEqual(row["kind"], "spatial-analysis")
                 self.assertEqual(json.loads(row["value_json"])["source"]["sha256"], row["sha256"])
+            # Explicit selection and the global gate have different evidence
+            # contracts even when their selected-sector lists are identical.
+            inspect_space(config, map_path)
+            inspect_space(config, map_path, [0, 1, 2])
+            with database(config.knowledge_db) as db:
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM observations").fetchone()[0], 4)
 
 
 if __name__ == "__main__":

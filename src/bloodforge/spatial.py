@@ -14,7 +14,7 @@ from .native import NativeMap, read_map
 from .store import canonical_json, database, digest
 from .validation import validate_map
 
-SPATIAL_VERSION = "spatial-understanding-1.0"
+SPATIAL_VERSION = "spatial-understanding-1.1.0"
 DEFAULT_POLICY = {"broad_opening_ratio": 0.5, "expansion_area_ratio": 4.0}
 LIMITATIONS = [
     "Native portal adjacency is neither navigability nor visibility.",
@@ -50,6 +50,58 @@ def _components(nodes: list[int], edges: list[tuple[int, int]]) -> list[list[int
     return result
 
 
+def _validated_scope(level: NativeMap, selected: list[int], *, explicit: bool) -> tuple[dict, dict]:
+    """Prove selected topology while retaining failures elsewhere unchanged.
+
+    Native records and complete, unique wall ownership remain global gates.
+    An explicit selection may exclude malformed loops and unrelated portals,
+    but every directed portal reference touching it must still be valid.
+    Polygon validity is checked separately by ``sector_geometry``.
+    """
+    validation = validate_map(level)
+    dimensions = {key: {field: validation[key][field] for field in ("status", "error_count", "issues")}
+                  for key in ("native", "geometry", "portals")}
+    for dimension in dimensions:
+        if dimensions[dimension]["error_count"] and (dimension == "native" or not explicit):
+            raise ValueError(f"spatial analysis requires valid native geometry/portals: {dimension}")
+    # A valid range can contain a degenerate polygon. Do not conflate ownership
+    # of its records with geometric support, or overwrite duplicate owners.
+    ownership_codes = {"sector_wall_range_out_of_bounds", "wall_owned_by_multiple_sectors", "orphan_wall"}
+    for issue in dimensions["geometry"]["issues"]:
+        if issue["code"] in ownership_codes:
+            raise ValueError(f"spatial analysis requires complete unambiguous wall ownership: {issue}")
+    owner = {wi: si for si, sector in enumerate(level.sectors)
+             for wi in range(sector.wallptr, sector.wallptr + sector.wallnum)}
+    chosen = set(selected)
+    selected_walls = {wi for wi, si in owner.items() if si in chosen}
+    # Include incoming references even when the selected wall is one-sided or
+    # points elsewhere. Looking only at outgoing portals would hide corruption.
+    incident = selected_walls | {wi for wi, wall in enumerate(level.walls)
+                                if wall.nextwall in selected_walls or wall.nextsector in chosen}
+    incident |= {level.walls[wi].nextwall for wi in selected_walls
+                 if 0 <= level.walls[wi].nextwall < len(level.walls)}
+    for issue in dimensions["portals"]["issues"]:
+        if issue["index"] in incident:
+            raise ValueError(f"selected boundary has invalid incident portal: {issue}")
+    for wi in incident:
+        wall = level.walls[wi]
+        if wall.nextwall >= 0 and owner.get(wall.point2) != owner[wi]:
+            raise ValueError(f"selected boundary portal endpoint escapes its owning sector: wall {wi}")
+    # Scalar inverted Z is rejected for selected and boundary-neighbor sectors
+    # below, including the effective-flat zero-heinum case the validator omits.
+    error_count = sum(row["error_count"] for row in dimensions.values())
+    return owner, {
+        "mode": "explicit-sector-selection" if explicit else "whole-map",
+        "selected_polygon_geometry": "supported",
+        "wall_ownership": "globally_complete_and_unambiguous",
+        "incident_portals": "valid_in_both_directions",
+        "whole_map_structural_gate_passed": error_count == 0,
+        "whole_map_error_count": error_count,
+        "whole_map_dimensions": dimensions,
+        "interpretation": "support is limited to selected polygons and incident portals; whole-map structural findings are retained",
+    }
+
+
 def analyze_space(level: NativeMap, source_sha256: str, sectors: list[int] | None = None,
                   *, policy: dict | None = None) -> dict:
     """Measure a selected native region and its boundary against the whole map.
@@ -71,15 +123,11 @@ def analyze_space(level: NativeMap, source_sha256: str, sectors: list[int] | Non
     if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v <= 0
            for v in rules.values()):
         raise ValueError("spatial policy values must be finite and positive")
-    selected = list(range(len(level.sectors))) if sectors is None else sorted(set(sectors))
+    selected = list(range(len(level.sectors))) if sectors is None else list(sectors)
     if not selected or any(type(i) is not int or not 0 <= i < len(level.sectors) for i in selected):
         raise ValueError("select at least one valid native sector")
-    validation = validate_map(level)
-    for dimension in ("native", "geometry", "portals"):
-        if validation[dimension]["error_count"]:
-            raise ValueError(f"spatial analysis requires valid native geometry/portals: {dimension}")
-    owner = {wi: si for si, sector in enumerate(level.sectors)
-             for wi in range(sector.wallptr, sector.wallptr + sector.wallnum)}
+    selected = sorted(set(selected))
+    owner, scope_validation = _validated_scope(level, selected, explicit=sectors is not None)
     chosen = set(selected)
     needed = chosen | {w.nextsector for wi, w in enumerate(level.walls)
                        if owner[wi] in chosen and w.nextsector >= 0}
@@ -97,8 +145,12 @@ def analyze_space(level: NativeMap, source_sha256: str, sectors: list[int] | Non
         sector, polygon = level.sectors[i], polygons.get(i)
         flat = not ((sector.floorstat & 2 and sector.floorheinum != 0)
                     or (sector.ceilingstat & 2 and sector.ceilingheinum != 0))
-        if flat and sector.ceilingz > sector.floorz:
-            raise ValueError(f"effective-flat sector {i} has inverted ceiling/floor Z bounds")
+        ordered_z = sector.ceilingz <= sector.floorz if flat else None
+        if flat and not ordered_z:
+            reason = f"effective-flat sector {i} has inverted ceiling/floor Z bounds"
+            if i in chosen:
+                raise ValueError(reason)
+            geometry_errors.append({"sector": i, "scope": "neighbor", "reason": reason})
         sky = bool((sector.floorstat | sector.ceilingstat) & 1)
         parts = ([] if polygon is None else [polygon] if polygon.geom_type == "Polygon" else list(polygon.geoms))
         sprites = [j for j, item in enumerate(level.sprites) if item.sectnum == i]
@@ -106,13 +158,14 @@ def analyze_space(level: NativeMap, source_sha256: str, sectors: list[int] | Non
             "id": i, "evidence_kind": "derived-native-geometry", "walls": list(range(sector.wallptr, sector.wallptr + sector.wallnum)),
             "xy_area": polygon.area if polygon is not None else None,
             "xy_perimeter": polygon.length if polygon is not None else None,
-            "xy_bounds": list(polygon.bounds) if polygon is not None else None, "polygon_parts": len(parts),
-            "hole_count": sum(len(p.interiors) for p in parts),
-            "hole_area": sum(shapely.Polygon(ring).area for p in parts for ring in p.interiors),
-            "flat": flat, "sky_or_parallax": sky,
+            "xy_bounds": list(polygon.bounds) if polygon is not None else None,
+            "polygon_parts": len(parts) if polygon is not None else None,
+            "hole_count": sum(len(p.interiors) for p in parts) if polygon is not None else None,
+            "hole_area": sum(shapely.Polygon(ring).area for p in parts for ring in p.interiors) if polygon is not None else None,
+            "flat": flat, "flat_z_bounds_valid": ordered_z, "sky_or_parallax": sky,
             "native_slope_flags": [bool(sector.floorstat & 2), bool(sector.ceilingstat & 2)],
             "floor_z": sector.floorz, "ceiling_z": sector.ceilingz,
-            "flat_envelope_volume_xy2_z": polygon.area * (sector.floorz - sector.ceilingz) if flat and not sky and polygon is not None else None,
+            "flat_envelope_volume_xy2_z": polygon.area * (sector.floorz - sector.ceilingz) if flat and ordered_z and not sky and polygon is not None else None,
             "floor_finish": [sector.floorpicnum, sector.floorpal],
             "ceiling_finish": [sector.ceilingpicnum, sector.ceilingpal],
             "floor_shade": sector.floorshade, "ceiling_shade": sector.ceilingshade,
@@ -130,7 +183,8 @@ def analyze_space(level: NativeMap, source_sha256: str, sectors: list[int] | Non
             continue
         other, end = level.walls[wall.nextwall], level.walls[wall.point2]
         sa, sb = level.sectors[a], level.sectors[b]
-        flat = facts[a]["flat"] and facts[b]["flat"]
+        native_flat = facts[a]["flat"] and facts[b]["flat"]
+        flat = native_flat and facts[a]["flat_z_bounds_valid"] and facts[b]["flat_z_bounds_valid"]
         width = math.hypot(end.x - wall.x, end.y - wall.y)
         common_height = min(sa.floorz, sb.floorz) - max(sa.ceilingz, sb.ceilingz) if flat else None
         ratio = width / math.sqrt(min(polygons[a].area, polygons[b].area)) if a in polygons and b in polygons else None
@@ -141,6 +195,9 @@ def analyze_space(level: NativeMap, source_sha256: str, sectors: list[int] | Non
         openings.append({
             "id": f"portal:{wi}:{wall.nextwall}", "evidence_kind": "derived-native-boundary",
             "sectors": [a, b], "walls": [wi, wall.nextwall],
+            "endpoint_geometry": [{"sector": i, "xy_polygon_supported": i in polygons,
+                                   "flat_z_bounds_valid": facts[i]["flat_z_bounds_valid"]} for i in (a, b)],
+            "aperture_evidence_scope": "reciprocal wall segment and ordered flat base Z only; no polygon-interior or movement proof",
             "endpoints": [[wall.x, wall.y], [end.x, end.y]], "width_xy": width,
             "flat_opening_z": common_height, "floor_delta_z": sb.floorz - sa.floorz if flat else None,
             "ceiling_delta_z": sb.ceilingz - sa.ceilingz if flat else None,
@@ -152,7 +209,7 @@ def analyze_space(level: NativeMap, source_sha256: str, sectors: list[int] | Non
             "same_floor_finish": facts[a]["floor_finish"] == facts[b]["floor_finish"],
             "same_ceiling_finish": facts[a]["ceiling_finish"] == facts[b]["ceiling_finish"],
             "shade_delta": [sb.floorshade - sa.floorshade, sb.ceilingshade - sa.ceilingshade],
-            "static_point_connection": "blocked_by_native_flag" if movement_flags else "positive_flat_aperture_only" if open_flat else "closed_flat_aperture" if flat else "unknown_slope",
+            "static_point_connection": "blocked_by_native_flag" if movement_flags else "positive_flat_aperture_only" if open_flat else "closed_flat_aperture" if flat else "unknown_invalid_z_bounds" if native_flat else "unknown_slope",
             "navigation": "unverified", "visibility": "not_observed", "threshold_depth": "not_measured",
         })
     region_rows = []
@@ -219,12 +276,16 @@ def analyze_space(level: NativeMap, source_sha256: str, sectors: list[int] | Non
             "source": {"sha256": source_sha256}, "policy": rules,
             "geometry_engine": {"name": "shapely", "version": shapely.__version__, "geos": shapely.geos_version_string},
             "scope": {"selected_sectors": selected, "neighbor_sectors": sorted(needed - chosen)},
+            "scope_validation": scope_validation,
             "geometry_errors": geometry_errors,
             "native_counts": counts, "sectors": [facts[i] for i in selected],
             "openings": openings, "regions": region_rows, "transitions": transitions, "xy_overlaps": overlaps,
             "whole_level": {"reciprocal_components": _components(list(range(len(level.sectors))),
-                              [(owner[wi], w.nextsector) for wi, w in enumerate(level.walls) if w.nextwall >= 0 and wi < w.nextwall]),
-                            "interpretation": "native adjacency components, not progression routes"},
+                              [(owner[wi], w.nextsector) for wi, w in enumerate(level.walls) if w.nextwall >= 0 and wi < w.nextwall])
+                              if scope_validation["whole_map_structural_gate_passed"] else None,
+                            "interpretation": "native adjacency components, not progression routes"
+                            if scope_validation["whole_map_structural_gate_passed"] else
+                            "withheld: whole-map structural gate failed; local support does not establish global connectivity"},
             "limitations": LIMITATIONS,
             "claims": {"runtime_traversal_verified": False, "design_intent_established": False,
                        "renderer_visibility_observed": False, "bot_used": False}}
@@ -245,7 +306,8 @@ def inspect_space(config, map_path: Path, sectors: list[int] | None = None) -> d
             "SELECT relative_path,population,tier,author FROM sources WHERE sha256=? AND active=1 ORDER BY population,relative_path", (sha,))]
         result["knowledge_indexed"] = bool(known)
         if known:
-            key = digest({"scope": result["scope"], "policy": result["policy"], "engine": result["geometry_engine"]})
+            key = digest({"scope": result["scope"], "selection_mode": result["scope_validation"]["mode"],
+                          "policy": result["policy"], "engine": result["geometry_engine"]})
             db.execute("INSERT OR IGNORE INTO observations VALUES(?,?,?,?,?)",
                        (sha, SPATIAL_VERSION, "spatial-analysis", key, canonical_json(result)))
     saved = record_tool_evidence(config, result, "spatial-analysis")
@@ -254,7 +316,9 @@ def inspect_space(config, map_path: Path, sectors: list[int] | None = None) -> d
 
 def compact_space(result: dict) -> dict:
     """Question-oriented summary, with full metrics available through its report."""
-    return {"source": result["source"], "scope": result["scope"],
+    return {"source": result["source"], "extractor": result["extractor"], "scope": result["scope"],
+            "scope_validation": {key: value for key, value in result["scope_validation"].items()
+                                 if key != "whole_map_dimensions"},
             "questions": {
                 "which_sectors_may_form_continuous_spaces": [
                     {key: r[key] for key in ("id", "view", "sectors", "xy_union_area", "supporting_openings")}
@@ -279,6 +343,8 @@ def compare_spaces(before: dict, after: dict) -> dict:
         raise ValueError("spatial comparison requires the same native sector selection")
     if before["policy"] != after["policy"]:
         raise ValueError("spatial comparison requires the same analysis policy")
+    if before["extractor"] != after["extractor"] or before["geometry_engine"] != after["geometry_engine"]:
+        raise ValueError("spatial comparison requires the same extractor and geometry engine")
     first = {s["id"]: s for s in before["sectors"]}
     second = {s["id"]: s for s in after["sectors"]}
     first_openings = {tuple(o["walls"]): o for o in before["openings"]}
@@ -291,6 +357,7 @@ def compare_spaces(before: dict, after: dict) -> dict:
             changes.append({"walls": list(key), "changes": changed})
     return {"schema": "bloodforge.spatial-comparison.v1", "source_hashes": [before["source"]["sha256"], after["source"]["sha256"]],
             "correspondence": "same native indices; only use with an audited index-preserving intervention",
+            "scope_validation": {"before": before["scope_validation"], "after": after["scope_validation"]},
             "native_counts_unchanged": before["native_counts"] == after["native_counts"],
             "selected_floor_area_unchanged": all(first[i]["xy_area"] == second[i]["xy_area"] for i in first),
             "portal_pairs_removed": [list(k) for k in sorted(first_openings.keys() - second_openings.keys())],

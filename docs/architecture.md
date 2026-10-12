@@ -26,6 +26,18 @@ hypotheses. The same native sector may participate in both; neither view is a
 room partition. Native aperture, floor/ceiling relations, movement flags, renderer
 flags and material matches remain independent observations.
 
+Extractor 1.1.0 makes explicit sector selection a bounded proof. The unchanged
+native validator still runs over the full map, and its native dimension plus
+complete, unique wall ownership remain global gates. Selected polygons are
+checked strictly; portal checks include incoming claims from outside selection
+as well as outgoing pairs and peer endpoint ownership. Unrelated geometry or
+portal errors are retained in `scope_validation`, never repaired or relabeled
+as a whole-map pass. Global adjacency components are withheld if that structural
+gate fails. Omitting selection preserves the strict whole-map gate.
+Unavailable neighbor polygons or inverted neighbor Z bounds produce unknown
+dependent metrics; each opening states its endpoint geometry support. The
+selected geometry itself must remain supported.
+
 `spatial_geometry.py` uses Shapely/GEOS for irregular point2 polygons, holes,
 nested loops and XY overlaps. This optional dependency provides mature polygon
 operations; no source geometry is repaired. XY and Z are analyzed separately:
@@ -42,6 +54,10 @@ successive visible-object changes. Renderer contributions can overcount pixels;
 they are not physical occupancy, distance or exclusive image coverage. Missing
 objects are not automatically occluded. A static pose sequence is not a route
 traversal or runtime state observation.
+Sequence reports retain the analyzer version, selected sectors and scope
+validation, bound by a canonical analytical-payload hash. Visible native sectors
+outside the selected scope keep renderer evidence but gain no derived region
+membership. Report paths and storage metadata are excluded from that digest.
 
 `spatial_edits.py` performs bounded interventions on copied maps and audits every
 changed native field. The v1 comparison requires preserved native allocation
@@ -59,8 +75,10 @@ and indexes for source identities, provenance, signatures and families.
 `source_history` retains replaced identities/metadata. Tier copies remain
 separate source locations with `is_view=1`. One extraction serves all aliases.
 
-Spatial analyses reuse `observations` with extractor `spatial-understanding-1.0`,
-source SHA, and a scope/policy/geometry-engine-version key. No schema migration
+Spatial analyses reuse `observations` with extractor `spatial-understanding-1.1.0`,
+source SHA, and a scope/selection-mode/policy/geometry-engine-version key. Explicit
+and implicit full selections have distinct validation contracts and keys.
+No schema migration
 is needed. Generated counterfactuals are indexed only as workspace artifacts;
 they are not inserted as original corpus content. Full reports and observer
 images use the existing content-addressed artifact store. Prototype extractor

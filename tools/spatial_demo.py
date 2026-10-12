@@ -15,7 +15,8 @@ from bloodforge.config import load_config
 from bloodforge.evidence import record_tool_evidence
 from bloodforge.native import encode_map, read_map
 from bloodforge.observe import observe_map
-from bloodforge.spatial import inspect_space, compare_spaces, diagram_svg, require_index_correspondence
+from bloodforge.spatial import (SPATIAL_VERSION, analyze_space, inspect_space,
+                               compare_spaces, diagram_svg, require_index_correspondence)
 from bloodforge.spatial_edits import intervene
 from bloodforge.spatial_geometry import sample_route
 from bloodforge.spatial_views import summarize_sequence, compare_sequences
@@ -136,12 +137,37 @@ def run(output: Path, reuse_recon: Path | None = None, reuse_run: Path | None = 
     holdout_hash = hashlib.sha256(holdout_path.read_bytes()).hexdigest()
     if holdout_hash != "670fa0792ff8d2c0be2fafb921261b67184331107f95975c288f0c56d635294d":
         raise ValueError("holdout source SHA differs")
+    holdout = {"sha256": holdout_hash,
+               "evaluation_role": "diagnostic re-evaluation of retained v1.0 holdout; no longer an unseen test",
+               "extractor": SPATIAL_VERSION}
+    try:
+        analyze_space(read_map(holdout_path), holdout_hash)
+        holdout["whole_map_status"] = "supported"
+    except ValueError as exc:
+        holdout.update(whole_map_status="unsupported", whole_map_reason=str(exc))
     try:
         holdout_analysis = inspect_space(config, holdout_path, [810,814])
-        holdout = {"sha256": holdout_hash, "status": "analyzed", "report_path": holdout_analysis["report_path"]}
+        holdout.update(status="selected_geometry_supported", report_path=holdout_analysis["report_path"],
+                       scope_validation=holdout_analysis["scope_validation"])
     except ValueError as exc:
-        holdout = {"sha256": holdout_hash, "status": "unsupported", "reason": str(exc),
-                   "scope": "held-out community geometry gate; no heuristic tuning or silent repair"}
+        holdout.update(status="unsupported", reason=str(exc))
+    else:
+        save(output / "bludtown-analysis.json", holdout_analysis)
+        poses = json.loads((ROOT / "examples/spatial-bludtown.cameras.json").read_text())
+        (output / "bludtown.svg").write_text(diagram_svg(read_map(holdout_path), holdout_analysis, poses), encoding="utf-8")
+        try:
+            summary = observe(holdout_path, "bludtown", poses)
+            sequence = summarize_sequence(summary, holdout_analysis)
+        except ValueError as exc:
+            holdout.update(perception_status="unsupported", perception_reason=str(exc))
+        else:
+            holdout["perception_status"] = "static_views_observed"
+            record_tool_evidence(config, sequence, "spatial-perception")
+            save(output / "bludtown-sequence.json", sequence)
+            examples.append({"name": "BLUDTOWN diagnostic selection", "source": holdout_analysis["source"],
+                             "analysis_report": holdout_analysis["report_path"],
+                             "sequence": str(output / "bludtown-sequence.json"), "views": len(poses),
+                             "diagram": "bludtown.svg"})
     report = {"schema": "bloodforge.spatial-milestone.v1", "examples": examples,
               "counterfactuals": results, "holdout": holdout,
               "claims": {"predictions_all_passed": all(r["prediction_passed"] for r in results),
@@ -163,15 +189,20 @@ def run(output: Path, reuse_recon: Path | None = None, reuse_run: Path | None = 
         for shot in (shots[0], shots[-1]):
             relative = Path(shot["path"]).resolve().as_uri()
             html.append(f'<figure><img src="{relative}"><figcaption>{escape(shot["id"])}</figcaption></figure>')
-        html.append('</div></div><p>Sampled visible native sectors: ' + escape(str([v["visible_native_sectors"] for v in sequence["views"]])) + '</p>')
+        html.append('</div></div><p>Sampled visible sectors within analysis scope: ' + escape(str([v["visible_native_sectors_in_analysis_scope"] for v in sequence["views"]])) +
+                    '. Visible sector counts outside scope: ' + escape(str([len(v["visible_native_sectors_outside_analysis_scope"]) for v in sequence["views"]])) +
+                    '. Those additional sectors have renderer evidence only.</p>')
     html.append('<h2>Counterfactual approach</h2><div class="frames">')
     for name in ("e2m5-baseline", "close-opening", "lower-ceiling", "block-movement-flag"):
         shot = json.loads(Path(observation_summaries[name]).read_text())["screenshots"][0]
         html.append(f'<figure><img src="{Path(shot["path"]).resolve().as_uri()}"><figcaption>{name}</figcaption></figure>')
-    html.append('</div><h2>Limits and holdout</h2><p>' + escape(str(holdout)) + '</p><p>Region groups are hypotheses. Sprite volume, traversal, underwater state, nonzero slopes and dynamic mechanisms remain unresolved. Absence from a view does not prove occlusion or inaccessibility. Surface pixel samples can overlap.</p>')
+    holdout_summary = {key: value for key, value in holdout.items() if key != "scope_validation"}
+    if "scope_validation" in holdout:
+        holdout_summary["whole_map_error_count"] = holdout["scope_validation"]["whole_map_error_count"]
+    html.append('</div><h2>Limits and retained holdout</h2><p>' + escape(str(holdout_summary)) + '</p><p>Region groups are hypotheses. Sprite volume, traversal, underwater state, nonzero slopes and dynamic mechanisms remain unresolved. Absence from a view does not prove occlusion or inaccessibility. Surface pixel samples can overlap.</p>')
     (output / "report.html").write_text("\n".join(html), encoding="utf-8")
     return {"report": str(output / "report.json"), "visual_report": str(output / "report.html"),
-            "report_hash": report["report_hash"], "claims": report["claims"], "holdout": holdout}
+            "report_hash": report["report_hash"], "claims": report["claims"], "holdout": holdout_summary}
 
 
 if __name__ == "__main__":

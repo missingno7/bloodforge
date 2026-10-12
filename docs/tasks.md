@@ -30,6 +30,10 @@
 - Three original campaign examples, four predicted counterfactual outcomes and
   preserved invariants; a community holdout explicitly rejected by the current
   geometry gate. See [measured spatial evidence](spatial-understanding-v1.md).
+- Scoped spatial inspection with strict selected polygons and incident portals,
+  retained full-map failures and separate renderer evidence outside selection.
+  BLUDTOWN sectors 810/814 now have local geometry and two static views; all 64
+  whole-map structural errors and the original failed report remain preserved.
 
 ## Current bottlenecks
 
@@ -43,7 +47,8 @@ perception remain separate.
    identity; sampled first visibility does not prove first visibility along a route.
 2. Support more native geometry/state cases without silently repairing source
    facts: nonzero slopes, overlapping/degenerate loops, underwater state and
-   room-over-room mechanisms. Preserve the failed BLUDTOWN community holdout.
+   room-over-room mechanisms. BLUDTOWN is now a diagnostic re-evaluation of the
+   retained failed holdout, not an unseen generalization test.
 3. Broaden independent spatial examples and counterfactuals without tuning on
    held-out cases. Keep populations and duplicate groups apart.
 4. Translate supported spatial relationships into authored constraints before

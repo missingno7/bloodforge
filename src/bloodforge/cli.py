@@ -99,7 +99,7 @@ def _parser() -> argparse.ArgumentParser:
     for name in ("inspect", "transitions"):
         command = space.add_parser(name)
         command.add_argument("map", type=Path)
-        command.add_argument("--sectors", type=str, help="comma-separated native sector selection; default whole map")
+        command.add_argument("--sectors", type=str, help="explicit local sector scope; unrelated structural failures remain reported; default whole-map gate")
         command.add_argument("--observation", type=Path, help="native observer summary for a controlled pose sequence")
         command.add_argument("--diagram", type=Path, help="write source-indexed SVG diagram")
     viewpoints = space.add_parser("viewpoints", help="sample static poses; does not verify a movement route")
@@ -192,6 +192,8 @@ def dispatch(args: argparse.Namespace) -> object:
                     "first_seen": sequence["first_seen"],
                     "views": [{"id": view["id"], "camera": view["camera"],
                                "visible_native_sectors": view["visible_native_sectors"],
+                               "visible_native_sectors_in_analysis_scope": view["visible_native_sectors_in_analysis_scope"],
+                               "visible_native_sectors_outside_analysis_scope": view["visible_native_sectors_outside_analysis_scope"],
                                "visible_region_ids": [region["id"] for region in view["visible_regions"]]}
                               for view in sequence["views"]],
                     "transitions": [{key: row[key] for key in ("from_view", "to_view", "gained_native_sectors", "lost_native_sectors")}
@@ -203,8 +205,10 @@ def dispatch(args: argparse.Namespace) -> object:
                 args.diagram.write_text(diagram_svg(read_map(args.map), result, cameras), encoding="utf-8")
                 compact["diagram"] = str(args.diagram.resolve())
             if args.action == "transitions":
-                return {"source": result["source"], "openings": result["openings"], "transitions": result["transitions"],
-                        "report_path": result["report_path"], **({"perception": compact["perception"]} if "perception" in compact else {})}
+                return {key: compact[key] for key in ("source", "extractor", "scope", "scope_validation", "geometry_errors",
+                                                      "claims", "limitations", "report_path", "report_hash")} | {
+                        "openings": result["openings"], "transitions": result["transitions"],
+                        **{key: compact[key] for key in ("perception", "diagram") if key in compact}}
             return compact
         if args.action == "viewpoints":
             from .spatial_geometry import sample_route

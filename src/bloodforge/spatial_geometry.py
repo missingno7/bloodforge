@@ -32,7 +32,11 @@ def _sector(level: NativeMap, index: int):
 
 
 def _sector_range(level: NativeMap, index: int) -> tuple[int, int]:
-    """Validate all declared ownership ranges, then return target [start,end)."""
+    """Validate ownership ranges, then require a polygon-sized target range.
+
+    A disjoint zero/two-wall range is insufficient for that sector's polygon,
+    but it does not make ownership of the target sector's walls ambiguous.
+    """
     sector = _sector(level, index)
     start, count = sector.wallptr, sector.wallnum
     if (isinstance(start, bool) or isinstance(count, bool) or
@@ -47,7 +51,7 @@ def _sector_range(level: NativeMap, index: int) -> tuple[int, int]:
                 not isinstance(other_start, int) or not isinstance(other_count, int)):
             raise SpatialGeometryError(f"sector {other_index} wall range is not integral")
         other_end = other_start + other_count
-        if other_start < 0 or other_count < 3 or other_end > len(level.walls):
+        if other_start < 0 or other_count < 0 or other_end > len(level.walls):
             raise SpatialGeometryError(
                 f"sector {other_index} wall range [{other_start}, {other_end}) is invalid"
             )

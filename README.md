@@ -42,6 +42,12 @@ $recipe = .\tools\bf.ps1 recipes infer | ConvertFrom-Json
 The spatial commands accept original irregular maps, independently of the
 rectangular construction compiler. Select native sectors as an explicit scope;
 derived groups may overlap across continuity views and are not room labels.
+An explicit selection can be inspected when unrelated loops or portals fail
+structural checks. Native records and complete unique wall ownership must still
+pass globally; selected polygons and every incoming/outgoing boundary portal
+must pass locally. `scope_validation` retains the whole-map errors, and global
+connectivity is withheld when that gate fails. Omitting `--sectors` retains the
+strict whole-map gate. This does not repair or validate the rest of the source.
 
 ```powershell
 $map = 'D:\Games\DOS\llmapper\maps\blood\campaign\E1M4.MAP'
@@ -60,7 +66,8 @@ them. `space intervene` takes a JSON object with `expected_source_sha256` and
 `--before-views` / `--after-views` observer summaries. Reports retain native refs,
 assumptions and limits; no visibility is inferred from adjacency.
 
-Replay the three campaign examples and four frozen counterfactual predictions:
+Replay the three campaign examples, four frozen counterfactual predictions and
+the retained BLUDTOWN diagnostic selection:
 
 ```powershell
 $env:PYTHONPATH = 'src'
@@ -72,7 +79,10 @@ top-down diagrams and controlled frames; `report.json` links the full evidence.
 `--reuse-recon` and `--reuse-run` can reuse earlier observer files only after
 rechecking live MAP, executable, resource, manifest, pose and image identities.
 The experiment plan is [spatial-interventions.json](examples/spatial-interventions.json).
-The bot is not used.
+View reports distinguish visible sectors inside and outside the spatial scope.
+BLUDTOWN remains unsupported as a whole map and is now a diagnostic re-evaluation,
+not an unseen holdout result. Its two poses are separate static samples, not a
+verified movement route. The bot is not used.
 
 `demo` performs ingestion, campaign mining, recipe inference and held-out
 evaluation in order. It returns compact JSON plus a content-addressed full

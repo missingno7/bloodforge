@@ -35,6 +35,17 @@ RECT = [(0, 0), (20, 0), (20, 20), (0, 20)]
 
 
 class SectorGeometryTests(unittest.TestCase):
+    def test_disjoint_short_range_is_not_ambiguous_target_ownership(self):
+        level = map_with_loops([RECT], [[(100, 100), (101, 101)]])
+        self.assertEqual(sector_geometry(level, 0).area, 400)
+        with self.assertRaises(SpatialGeometryError):
+            sector_geometry(level, 1)
+        pose = {"x": 10, "y": 10, "z": 4096, "sector": 0}
+        self.assertEqual(validate_pose(level, pose)["status"], "valid")
+        # Automatic resolution is still conservative for unsupported candidates.
+        del pose["sector"]
+        self.assertEqual(validate_pose(level, pose)["status"], "unsupported")
+
     def test_irregular_sector_and_even_odd_hole_with_nested_island(self):
         outer = [(0, 0), (20, 0), (20, 12), (12, 12), (12, 20), (0, 20)]
         hole = [(2, 2), (10, 2), (10, 10), (2, 10)]

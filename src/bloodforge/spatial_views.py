@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -21,6 +22,25 @@ class SpatialViewError(ValueError):
 
 def _canonical(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _analysis_identity(analysis: dict[str, Any]) -> dict[str, str]:
+    """Hash analytical content, excluding report/store location metadata."""
+    payload = deepcopy(analysis)
+    for key in ("report_path", "report_hash", "artifacts", "knowledge_indexed"):
+        payload.pop(key, None)
+    source = payload.get("source")
+    if isinstance(source, dict):
+        source.pop("path", None)
+        source.pop("provenance", None)
+    return {
+        "algorithm": "sha256",
+        "sha256": hashlib.sha256(_canonical(payload).encode("utf-8")).hexdigest(),
+        "payload_definition": (
+            "canonical JSON of the supplied analysis, excluding top-level report_path, "
+            "report_hash, artifacts, knowledge_indexed and source.path/source.provenance"
+        ),
+    }
 
 
 def _pose_key(pose: Mapping[str, Any]) -> str:
@@ -212,6 +232,8 @@ def summarize_sequence(summary_path: str | Path, analysis: dict[str, Any]) -> di
         raise SpatialViewError(f"cannot parse observed source MAP for pose validation: {exc}") from exc
     regions = _analysis_regions(analysis, map_identity["sha256"], level)
     wall_owners = _wall_owners(level)
+    selected_sectors = list(analysis["scope"]["selected_sectors"])
+    selected_sector_set = set(selected_sectors)
 
     views = []
     first_seen_sectors: dict[int, dict[str, Any]] = {}
@@ -250,6 +272,10 @@ def summarize_sequence(summary_path: str | Path, analysis: dict[str, Any]) -> di
 
         visible_surfaces = [item for item in surfaces if item["pixels"] > 0]
         visible_sectors = sorted({int(item["sector"]) for item in visible_surfaces})
+        visible_sectors_in_scope = sorted(selected_sector_set & set(visible_sectors))
+        visible_sectors_outside_scope = sorted(set(visible_sectors) - selected_sector_set)
+        visible_refs_in_scope = [item for item in visible_surfaces if item["sector"] in selected_sector_set]
+        visible_refs_outside_scope = [item for item in visible_surfaces if item["sector"] not in selected_sector_set]
         sector_pixels: dict[int, int] = {}
         for surface in visible_surfaces:
             sector_id = int(surface["sector"])
@@ -286,6 +312,11 @@ def summarize_sequence(summary_path: str | Path, analysis: dict[str, Any]) -> di
             "status": "ok",
             "frame": manifest_view.get("frame"),
             "visible_native_sectors": visible_sectors,
+            "visible_native_sectors_in_analysis_scope": visible_sectors_in_scope,
+            "visible_native_sectors_outside_analysis_scope": visible_sectors_outside_scope,
+            "visible_native_refs": visible_surfaces,
+            "visible_native_refs_in_analysis_scope": visible_refs_in_scope,
+            "visible_native_refs_outside_analysis_scope": visible_refs_outside_scope,
             "surface_pixel_samples_by_sector": {str(key): sector_pixels[key] for key in sorted(sector_pixels)},
             "visible_regions": visible_regions,
             "summed_region_pixel_samples": region_pixels,
@@ -335,9 +366,17 @@ def summarize_sequence(summary_path: str | Path, analysis: dict[str, Any]) -> di
         "observer": {"sha256": exe["sha256"], "path": exe["path"], "size": exe["size"]},
         "resources": {"root": run["request"]["resource_dir"], "file_count": len(assets),
                       "identity_sha256": _resource_digest(assets)},
-        "analysis": {"regions": regions,
-                     "sector_count": len(analysis["sectors"]),
-                     "region_count": len(regions)},
+        "analysis": {
+            "schema": analysis.get("schema"),
+            "extractor": analysis.get("extractor"),
+            "selected_native_sectors": selected_sectors,
+            "scope_validation": analysis["scope_validation"] if "scope_validation" in analysis else None,
+            "scope_validation_supplied": "scope_validation" in analysis,
+            "identity": _analysis_identity(analysis),
+            "regions": regions,
+            "sector_count": len(analysis["sectors"]),
+            "region_count": len(regions),
+        },
         "claims": {
             "analysis_source_sha256_matches_map": True,
             "current_map_observer_and_resource_hashes_validated": True,
@@ -358,6 +397,7 @@ def summarize_sequence(summary_path: str | Path, analysis: dict[str, Any]) -> di
             "no distance/depth is inferred from surface records",
             "surface pixel samples are nonexclusive renderer contributions and can exceed frame area",
             "region membership is supplied by source analysis; this module does not classify regions",
+            "outside-analysis-scope sectors retain renderer evidence only and are not assigned spatial regions",
             "objects absent from the manifest are not inferred to be occluded or unreachable",
             "renderer limitations are inherited from the observation manifest",
         ],

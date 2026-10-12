@@ -150,20 +150,24 @@ class SpatialViewSequenceTests(unittest.TestCase):
         summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
         return summary_path
 
-    def _analysis(self, map_path: Path, *, names=("entry-space", "upper-space")):
+    def _analysis(self, map_path: Path, *, names=("entry-space", "upper-space"), selected=(0, 1),
+                  extractor=None, scope_validation=None):
+        selected = list(selected)
+        region_by_sector = {0: (names[0], "coplanar"), 1: (names[1], "finish")}
         return {
             "schema": "bloodforge.spatial-understanding.v1",
+            **({"extractor": extractor} if extractor is not None else {}),
             "source": {"sha256": _digest(map_path)},
-            "scope": {"selected_sectors": [0, 1]},
+            "scope": {"selected_sectors": selected},
             "native_counts": {"sectors": len(self.native.sectors),
                               "walls": len(self.native.walls), "sprites": len(self.native.sprites)},
-            "sectors": [{"id": 0}, {"id": 1}],
+            "sectors": [{"id": sector} for sector in selected],
             "regions": [
-                {"id": names[0], "sectors": [0], "view": "coplanar",
-                 "evidence_kind": "continuity-hypothesis"},
-                {"id": names[1], "sectors": [1], "view": "finish",
-                 "evidence_kind": "continuity-hypothesis"},
+                {"id": region_by_sector[sector][0], "sectors": [sector],
+                 "view": region_by_sector[sector][1], "evidence_kind": "continuity-hypothesis"}
+                for sector in selected
             ],
+            **({"scope_validation": scope_validation} if scope_validation is not None else {}),
         }
 
     def test_summarizes_native_visibility_and_first_seen_sequence(self):
@@ -173,6 +177,10 @@ class SpatialViewSequenceTests(unittest.TestCase):
         self.assertEqual(result["views"][0]["visible_regions"][0]["id"], "entry-space")
         self.assertEqual(result["views"][0]["visible_regions"][0]["contributing_native_refs"][0]["wall"], 0)
         self.assertEqual(result["views"][0]["visible_regions"][0]["summed_surface_pixel_samples"], 5)
+        self.assertEqual(result["analysis"]["selected_native_sectors"], [0, 1])
+        self.assertFalse(result["analysis"]["scope_validation_supplied"])
+        self.assertIsNone(result["analysis"]["extractor"])
+        self.assertEqual(len(result["views"][0]["visible_native_refs"]), 2)
         self.assertEqual(result["views"][1]["visible_native_sectors"], [1])
         self.assertEqual(result["transitions"][0]["gained_native_sectors"], [1])
         self.assertEqual(result["transitions"][0]["lost_native_sectors"], [0])
@@ -199,6 +207,44 @@ class SpatialViewSequenceTests(unittest.TestCase):
         analysis["scope"]["selected_sectors"] = [0]
         with self.assertRaisesRegex(SpatialViewError, "scope disagrees"):
             summarize_sequence(self.before, analysis)
+
+    def test_visible_sectors_outside_local_analysis_scope_stay_separate(self):
+        failure_report = {"status": "partial", "checks": {"global_geometry": "failed"},
+                          "note": "failure outside selected local scope"}
+        analysis = self._analysis(self.before_map, selected=(0,),
+                                  extractor="spatial-understanding-1.1",
+                                  scope_validation=failure_report)
+        result = summarize_sequence(self.before, analysis)
+        self.assertEqual(result["analysis"]["extractor"], "spatial-understanding-1.1")
+        self.assertEqual(result["analysis"]["scope_validation"], failure_report)
+        self.assertTrue(result["analysis"]["scope_validation_supplied"])
+        self.assertEqual(result["views"][0]["visible_native_sectors_in_analysis_scope"], [0])
+        self.assertEqual(result["views"][0]["visible_native_sectors_outside_analysis_scope"], [])
+        upper = result["views"][1]
+        self.assertEqual(upper["visible_native_sectors"], [1])
+        self.assertEqual(upper["visible_native_sectors_in_analysis_scope"], [])
+        self.assertEqual(upper["visible_native_sectors_outside_analysis_scope"], [1])
+        self.assertEqual([ref["sector"] for ref in upper["visible_native_refs"]], [1])
+        self.assertEqual([ref["sector"] for ref in upper["visible_native_refs_outside_analysis_scope"]], [1])
+        self.assertEqual(upper["visible_regions"], [])
+
+    def test_analysis_identity_hash_excludes_artifact_location_metadata(self):
+        analysis = self._analysis(self.before_map, extractor="spatial-understanding-1.1",
+                                  scope_validation={"status": "partial", "errors": ["outside"]})
+        analysis.update({"report_path": "C:/one/report.json", "report_hash": "one",
+                         "artifacts": [{"path": "C:/one/artifact.json", "sha256": "one"}],
+                         "knowledge_indexed": False})
+        first = summarize_sequence(self.before, analysis)["analysis"]["identity"]
+        analysis.update({"report_path": "D:/another/report.json", "report_hash": "two",
+                         "artifacts": [{"path": "D:/another/artifact.json", "sha256": "two"}],
+                         "knowledge_indexed": True})
+        second = summarize_sequence(self.before, analysis)["analysis"]["identity"]
+        self.assertEqual(first, second)
+        self.assertEqual(first["algorithm"], "sha256")
+        self.assertIn("report_path", first["payload_definition"])
+        analysis["scope_validation"]["errors"] = []
+        changed = summarize_sequence(self.before, analysis)["analysis"]["identity"]
+        self.assertNotEqual(first["sha256"], changed["sha256"])
 
     def test_rejects_surface_sector_that_does_not_own_wall(self):
         summary_path = self.before

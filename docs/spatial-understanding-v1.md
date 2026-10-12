@@ -77,9 +77,9 @@ remain identical. They do not establish learned design rules.
 
 The frozen community contrast `community/BLUDTOWN.MAP`, hash
 `670fa0792ff8d2c0be2fafb921261b67184331107f95975c288f0c56d635294d`,
-fails the current native geometry/portal gate (64 validator errors, including
+fails the whole-map native geometry/portal gate (64 validator errors, including
 two-wall sectors such as 17 and 70). It is recorded as unsupported, not repaired
-or replaced with an easier holdout. The tier-S alias has the same hash and does
+or replaced with an easier holdout in the original 1.0 report. The tier-S alias has the same hash and does
 not count as a second example. Tier is provenance, not a quality judgment.
 
 Selected E1M3 geometry is supported, but neighbor sectors 72 and 325 have invalid
@@ -91,6 +91,59 @@ room-over-room effects, collision volumes, dynamic mechanisms, intent and
 continuous traversal remain outside this verification level. The bot was neither
 launched nor used as an oracle.
 
+## Scoped follow-up — extractor 1.1.0
+
+Explicit sector inspection now proves the selected polygons and all incident
+portal references independently of unrelated malformed loops. Native records
+and complete unique wall ownership still pass globally. Incoming references
+from outside selection cannot bypass reciprocity, ownership or reversed-endpoint
+checks. The full validator findings remain in `scope_validation`; failed global
+connectivity is reported as unknown rather than computed from damaged links.
+Default whole-map inspection keeps its original strict gate. Unsupported
+neighbor polygon/Z facts make dependent measurements unknown, with endpoint
+support recorded separately from native aperture measurements.
+
+The contract was tested on synthetic damage before re-evaluating BLUDTOWN.
+Sectors 810 and 814 are now supported locally, with areas 24,903,680 and
+329,269,248 XY units². Sector 814 has one hole of 31,588,352 XY units². Their four
+reciprocal links are 6205↔6233, 6206↔6232, 6208↔6236 and 6209↔6235. Each has
+movement-blocking and masked flags; neither grouping view merges them despite
+matching floor and ceiling finishes. The 13.22× area contrast therefore earns
+no unconstrained expansion candidate. All **14 geometry and 50 portal errors**
+remain outside this local selection; whole-map inspection still fails.
+
+Two authored poses in `examples/spatial-bludtown.cameras.json` passed strict
+local XY/Z checks and rendered without modifying inputs. From the sector-814
+pose, sector 810 contributes 5,860 surface samples; from sector 810, sector 814
+contributes 14,490. The latter frame is dominated by a nearby wall, with other
+surfaces near its edges. Contributions are nonexclusive renderer records, not
+area or traversability. Eleven and two additional visible sectors respectively
+are explicitly outside the analysis scope. The sequence retains that distinction,
+the analyzer version, whole-map failures and a hash of its analytical input.
+These poses do not establish a continuous route or physical access.
+
+BLUDTOWN is now a **diagnostic re-evaluation**, not an unseen generalization
+test. Its original failure and earlier report remain intact; no grouping policy,
+source geometry, corpus alias count or reconstruction holdout changed.
+This gives an agent useful local evidence without promoting the entire source
+or assigning spatial interpretations to every object the renderer happens to see.
+
+The follow-up passes **168 tests**, including every previous reconstruction and
+compiler regression. Synthetic cases cover remote damage, corrupt incoming
+portals, malformed selected polygons, global ownership ambiguity, unsupported
+neighbors and scope-sensitive evidence identities. All four frozen campaign
+counterfactuals still pass after live input/output hash checks. Every previously
+released campaign geometry/grouping metric is unchanged. Both databases have
+zero foreign-key violations; zero recipes are verified. No bot was launched.
+An offline wheel build succeeds with SHA-256
+`b7c36972fcacb8fe3385a4d815c519675417aa4024b75344b088c4259e542ba0`.
+Visibility transition deltas still cover all rendered native sectors; use the
+per-view scope fields when interpreting them as local spatial evidence.
+
+Follow-up visual report: `data/spatial-v1/scope-release-20261013/report.html`;
+machine report beside it. Immutable artifact:
+`data/artifacts/05/05d28948ea2ee58b9f06104ebadb84ebaf1873ea8d7e9417d634782deedb1a11.json`.
+
 ## Replay and stored evidence
 
 Install `.[spatial,visual]`, then follow the README `space inspect`, `transitions`,
@@ -101,7 +154,7 @@ $env:PYTHONPATH = 'src'
 .\.venv\Scripts\python.exe tools\spatial_demo.py --output data\spatial-v1-fresh
 ```
 
-Current local visual report: `data/spatial-v1/release-20261013/report.html`.
+Original 1.0 local visual report: `data/spatial-v1/release-20261013/report.html`.
 It includes representative top-down SVG diagrams and controlled rendered frames.
 The machine report is beside it; its immutable indexed artifact is
 `data/artifacts/3a/3a34ef94e1aa265d63173491a3e104d591c929d999d0c21dae393dbd78e920fe.json`.
@@ -109,7 +162,7 @@ Source analyses use extractor `spatial-understanding-1.0` in the existing knowle
 store. Counterfactuals, comparisons and PNGs use the existing workspace artifact
 index. Commercial MAPs, assets and generated output remain outside Git.
 
-All **154 tests** pass, including the previous 111 parser, reconstruction,
+The original 1.0 checkpoint passed **154 tests**, including the previous 111 parser, reconstruction,
 compilation, transaction and observation tests. New regressions cover holes,
 ambiguous poses, nonzero and zero-heinum slopes, inverted bounds, overlapping
 groupings, false expansion candidates at blocked boundaries, source identity,
