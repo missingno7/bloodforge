@@ -1,16 +1,20 @@
 """SQLite persistence for semantic LevelScene source revisions."""
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import json
 import sqlite3
 from typing import Any
 
 from .compiler import compile_scene
 from .scene import (
+    AreaSpec,
+    ConnectionSpec,
+    LandingSpec,
     LevelScene,
     PlaneMaterial,
     PlayerStart,
+    PortalEndpoint,
     SceneChange,
     SceneError,
     StairSpec,
@@ -31,16 +35,22 @@ def scene_to_dict(scene: LevelScene) -> dict[str, Any]:
     return {
         "revision": scene.revision,
         "stairs": [asdict(stair) for stair in scene.stairs],
+        "landings": [asdict(landing) for landing in scene.landings],
+        "areas": [asdict(area) for area in scene.areas],
+        "connections": [asdict(connection) for connection in scene.connections],
         "player_start": asdict(scene.player_start) if scene.player_start is not None else None,
     }
 
 
 def scene_from_dict(value: object) -> LevelScene:
     """Build a validated scene from its persisted source document."""
-    if not isinstance(value, dict) or set(value) != {"revision", "stairs", "player_start"}:
-        raise WorkspaceError("scene document must contain revision, stairs, and player_start")
-    if not isinstance(value["stairs"], list):
-        raise WorkspaceError("scene stairs must be a list")
+    required = {"revision", "stairs", "player_start"}
+    optional = {"landings", "areas", "connections"}
+    if not isinstance(value, dict) or not required <= set(value) or set(value) - required - optional:
+        raise WorkspaceError("scene document requires revision, stairs, player_start; optional landings, areas, connections")
+    for key in ("stairs", "landings", "areas", "connections"):
+        if not isinstance(value.get(key, []), list):
+            raise WorkspaceError(f"scene {key} must be a list")
     try:
         stairs = tuple(stair_from_dict(item) if isinstance(item, dict) else _bad_stair()
                        for item in value["stairs"])
@@ -48,13 +58,60 @@ def scene_from_dict(value: object) -> LevelScene:
         player = PlayerStart(**player_value) if isinstance(player_value, dict) else None
         if player_value is not None and player is None:
             raise WorkspaceError("player_start must be an object or null")
-        return LevelScene(stairs=stairs, player_start=player, revision=value["revision"])
+        return LevelScene(stairs=stairs, player_start=player, revision=value["revision"],
+                          landings=tuple(landing_from_dict(item) for item in value.get("landings", [])),
+                          areas=tuple(area_from_dict(item) for item in value.get("areas", [])),
+                          connections=tuple(connection_from_dict(item) for item in value.get("connections", [])))
     except (TypeError, SceneError) as exc:
         raise WorkspaceError(f"invalid scene document: {exc}") from exc
 
 
 def _bad_stair():
     raise WorkspaceError("each stair must be an object")
+
+
+def appearance_from_dict(value: object) -> StepAppearance:
+    """Decode a rectangle's appearance, retaining typed defaults for omitted surfaces."""
+    if not isinstance(value, dict):
+        raise WorkspaceError("appearance must be an object")
+    fields = dict(value)
+    for key, cls in (("floor", PlaneMaterial), ("ceiling", PlaneMaterial),
+                     ("north", WallMaterial), ("east", WallMaterial),
+                     ("south", WallMaterial), ("west", WallMaterial)):
+        if key in fields:
+            if not isinstance(fields[key], dict):
+                raise WorkspaceError(f"{key} material must be an object")
+            fields[key] = cls(**fields[key])
+    return StepAppearance(**fields)
+
+
+def area_from_dict(value: object) -> AreaSpec:
+    if not isinstance(value, dict):
+        raise WorkspaceError("each area must be an object")
+    fields = dict(value)
+    if "appearance" in fields:
+        fields["appearance"] = appearance_from_dict(fields["appearance"])
+    return AreaSpec(**fields)
+
+
+def landing_from_dict(value: object) -> LandingSpec:
+    if not isinstance(value, dict):
+        raise WorkspaceError("each landing must be an object")
+    fields = dict(value)
+    if fields.get("appearance") is not None:
+        fields["appearance"] = appearance_from_dict(fields["appearance"])
+    return LandingSpec(**fields)
+
+
+def connection_from_dict(value: object) -> ConnectionSpec:
+    if not isinstance(value, dict):
+        raise WorkspaceError("each connection must be an object")
+    fields = dict(value)
+    for endpoint in ("a", "b"):
+        if not isinstance(fields.get(endpoint), dict):
+            raise WorkspaceError("connections require a and b endpoint objects")
+        fields[endpoint] = PortalEndpoint(**fields[endpoint])
+    return ConnectionSpec(**fields)
 
 
 def stair_from_dict(value: dict[str, Any]) -> StairSpec:
@@ -64,21 +121,7 @@ def stair_from_dict(value: dict[str, Any]) -> StairSpec:
     if appearance is not None:
         if not isinstance(appearance, (list, tuple)):
             raise WorkspaceError("stair appearance must be a list, tuple, or null")
-        decoded = []
-        for item in appearance:
-            if not isinstance(item, dict):
-                raise WorkspaceError("each step appearance must be an object")
-            step = dict(item)
-            for key in ("floor", "ceiling"):
-                if not isinstance(step.get(key), dict):
-                    raise WorkspaceError(f"step {key} material must be an object")
-                step[key] = PlaneMaterial(**step[key])
-            for key in ("north", "east", "south", "west"):
-                if not isinstance(step.get(key), dict):
-                    raise WorkspaceError(f"step {key} material must be an object")
-                step[key] = WallMaterial(**step[key])
-            decoded.append(StepAppearance(**step))
-        fields["appearance"] = tuple(decoded)
+        fields["appearance"] = tuple(appearance_from_dict(item) for item in appearance)
     return StairSpec(**fields)
 
 
@@ -91,14 +134,20 @@ def scene_change_from_dict(value: object) -> SceneChange:
     if not isinstance(operation, str) or not isinstance(object_id, str):
         raise WorkspaceError("scene change requires operation and object_id strings")
 
-    def decode(part: object) -> StairSpec | PlayerStart | None:
+    decoders = {"set_stair": stair_from_dict, "remove_stair": stair_from_dict,
+                "set_area": area_from_dict, "remove_area": area_from_dict,
+                "set_landing": landing_from_dict, "remove_landing": landing_from_dict,
+                "set_connection": connection_from_dict, "remove_connection": connection_from_dict,
+                "set_player_start": lambda part: PlayerStart(**part)}
+    if operation not in decoders:
+        raise WorkspaceError(f"unsupported scene operation {operation!r}")
+
+    def decode(part: object):
         if part is None:
             return None
         if not isinstance(part, dict):
             raise WorkspaceError("scene change values must be objects or null")
-        if operation == "set_player_start":
-            return PlayerStart(**part)
-        return stair_from_dict(part)
+        return decoders[operation](part)
 
     try:
         return SceneChange(operation, object_id, decode(value.get("expected")),
@@ -171,6 +220,10 @@ def diff_scene(before: LevelScene, after: LevelScene) -> tuple[str, ...]:
     after_stairs = {stair.id: stair for stair in after.stairs}
     changed = [f"stair/{stair_id}" for stair_id in before_stairs.keys() | after_stairs.keys()
                if before_stairs.get(stair_id) != after_stairs.get(stair_id)]
+    for kind, attribute in (("area", "areas"), ("landing", "landings"), ("connection", "connections")):
+        first = {item.id: item for item in getattr(before, attribute)}
+        second = {item.id: item for item in getattr(after, attribute)}
+        changed.extend(f"{kind}/{key}" for key in first.keys() | second.keys() if first.get(key) != second.get(key))
     if before.player_start != after.player_start:
         changed.append("player_start")
     return tuple(sorted(changed))
@@ -219,7 +272,7 @@ def undo_scene(db: sqlite3.Connection, project_id: str, *, expected_revision: in
         if current.revision == 0:
             raise WorkspaceError("revision zero has no prior scene content to undo")
         previous = _load(db, project_id, current.revision - 1)
-        restored = LevelScene(previous.stairs, previous.player_start, revision=current.revision + 1)
+        restored = replace(previous, revision=current.revision + 1)
         compile_scene(restored)
         _append_revision(db, project_id, restored, current.revision,
                          {"operation": "undo", "undid_revision": current.revision})

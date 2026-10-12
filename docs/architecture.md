@@ -15,8 +15,9 @@ current checks.
 native records and portals deterministically; source authors use semantic IDs.
 `workspace.py` commits revisions only after preconditions and compilation pass,
 using an immediate SQLite transaction. Dry runs write nothing; undo adds a
-monotonic revision. Multi-room composition and mechanism channel allocation are
-not implemented behind speculative interfaces.
+monotonic revision. Flat rectangular areas, derived stair-end landings and
+explicit shared-boundary connections compose in the same scene. Mechanism
+channel allocation is not implemented behind speculative interfaces.
 
 ## Storage
 
@@ -117,6 +118,32 @@ that machinery. Use a graph library when graph matching exceeds these bounded
 adjacency operations. The optional external tools keep their own versions and
 content fingerprints in evidence.
 Pixel comparisons now use optional Pillow rather than a custom PNG decoder.
+
+## Flat area composition
+
+Areas and landings lower to private rectangular geometry inside the compiler.
+A landing references a stair endpoint, so its position and floor follow stair
+edits. Explicit connections operate on named cardinal boundaries, or named
+stair ends. Only positive collinear overlap becomes a reciprocal native portal;
+unconnected touching edges remain closed. Native allocation and wall subdivision
+remain compiler responsibilities. Non-overlap checks use a sweep over exact
+integer rectangles, and splits use one-dimensional intervals; polygon Boolean
+operations and general-purpose geometry dependencies are unnecessary for this
+bounded domain.
+
+Subdivision retains the original first-wall origin/orientation. It apportions
+wall repeat by segment length and advances panning from the directed wall start;
+non-integral native texture repeats and unsupported flipped splits fail instead
+of silently stretching textures. Semantic object maps include stable area,
+landing, step and connection references; numeric native indices may change when
+geometry changes. Material-only edits leave other native records unchanged.
+
+Workspace JSON accepts the legacy stair-only shape and optional area/landing/
+connection collections. Transactions validate the complete proposed scene, so
+dependent objects can be added or removed together. Undo restores every scene
+collection. Semantic cameras are resolved only against a byte-matching compiled
+scene revision. The authored connected demo is distinct from the source-held-fixed
+reconstruction fixture and makes no material-learning or traversal claim.
 
 The present database is about 1.25 GB for 4.55 million native records and
 1.23 million observations. Repeating SHA strings and portal JSON is measurable

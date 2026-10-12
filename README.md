@@ -91,8 +91,9 @@ historical content and provenance. Source hashes are rechecked on every scan.
 ```
 
 Compilation returns a MAP artifact path and semantic-to-native object map.
-The source model currently accepts one straight stair per scene, material tile
-IDs, optional per-step plane/wall appearance and an optional player start.
+The source model accepts straight stairs, rectangular rooms/corridors, stair-end
+landings, explicit connections, and an optional player start.
+Stairs support material tile IDs and optional per-step plane/wall appearance.
 Appearance includes shade, palette, texture scale/panning, visual flags,
 visibility and a cardinal first-wall anchor for relative texture alignment.
 It intentionally cannot represent a complete
@@ -101,6 +102,44 @@ an `--expected-revision`, and optional `--dry-run`; each record has operation,
 object_id, expected, and value. Exact previous-value preconditions and native
 compilation must succeed before a revision commits. `scene undo` appends a
 new revision; `scene diff --before N --after M` reports semantic changes.
+
+### Landings and connecting areas
+
+`LandingSpec` names a stair, its `bottom` or `top`, and a depth. The compiler
+derives its footprint, width, floor and ceiling and connects it to that stair.
+`AreaSpec` describes a named flat rectangle with a `room` or `corridor` role.
+`ConnectionSpec` joins two named boundaries, for example an area's `east` side
+to a landing's `west` side. Stair endpoints use `bottom`/`top`. Touching geometry
+does not open a portal without an explicit connection or landing relationship.
+
+Connections open the positive overlap of opposing shared boundaries and require
+matching floor levels. The compiler splits room walls for narrower openings,
+preserving texture scale and panning where exactly representable. It rejects
+overlap, duplicate portals, disconnected endpoints, unsupported texture splits,
+and missing references. Disconnected groups are permitted as closed regions;
+static adjacency is not a traversal claim. Overlapping XY interiors, including
+stacked rooms, are outside this compiler's present scope.
+
+```powershell
+.\tools\bf.ps1 scene create connected-stairs --file examples\connected-stairs.scene.json
+$level = .\tools\bf.ps1 level compile --project connected-stairs | ConvertFrom-Json
+.\tools\bf.ps1 level validate $level.artifact_path
+.\tools\bf.ps1 level observe $level.artifact_path --project connected-stairs --cameras examples\connected-stairs.cameras.json --output data\connected-stairs-observation
+.\tools\bf.ps1 level test-load $level.artifact_path --output data\connected-stairs-load
+```
+
+The example generates both rooms, both landings and the corridor from semantic
+source; it does not retain original-map surroundings. Camera `sector_object_id`
+references are resolved through the project, with an exact compiled-MAP identity
+check. Use a fresh observation directory when repeating the render. The load
+smoke runs without the bot and does not verify player movement.
+See [the recorded connected-area evidence](docs/connecting-areas-evidence.md)
+for native counts, image identities, static connectivity and load results.
+
+Scene changes now include `set_area`, `remove_area`, `set_landing`,
+`remove_landing`, `set_connection` and `remove_connection`. Add or remove
+dependent objects together in one atomic batch. `PlayerStart.area_id` can name
+an area or landing; `stair_id` targets a stair. These fields are mutually exclusive.
 
 ## Independent observation and load checks
 

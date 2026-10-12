@@ -82,7 +82,8 @@ def _parser() -> argparse.ArgumentParser:
     observe.add_argument("--output", type=Path, required=True)
     observe.add_argument("--executable", type=Path)
     observe.add_argument("--assets", type=Path)
-    observe.add_argument("--cameras", type=Path, help="JSON array of native camera poses; default MAP start")
+    observe.add_argument("--cameras", type=Path, help="JSON array of camera poses; semantic sector IDs require --project; default MAP start")
+    observe.add_argument("--project", help="resolve semantic camera sector_object_id against this current scene revision")
     runtime = level.add_parser("test-load", help="bounded NBlood initialization smoke; not a playability test")
     runtime.add_argument("map", type=Path)
     runtime.add_argument("--output", type=Path, required=True)
@@ -115,6 +116,35 @@ def _compact_evaluation(value: dict) -> dict:
                        "map": row.get("artifact_path"), "status": row["status"],
                        "structural_exact": row.get("fidelity", {}).get("structural_exact", False)}
                       for row in value["results"]]}
+
+
+def _resolve_camera_refs(map_bytes: bytes, values: object, scene) -> list[dict]:
+    """Bind authored camera identities to the exact generated scene artifact."""
+    from .compiler import compile_scene
+    from .native import encode_map
+    from .observe import CameraPose
+    compiled = compile_scene(scene)
+    if encode_map(compiled.native_map) != map_bytes:
+        raise ValueError("observed MAP does not match the project's current compiled revision")
+    if not isinstance(values, list) or not values:
+        raise ValueError("camera document must be a nonempty list")
+    resolved = []
+    for value in values:
+        if not isinstance(value, dict):
+            raise ValueError("each camera must be an object")
+        camera = dict(value)
+        if "sector_object_id" in camera:
+            semantic_id = camera.pop("sector_object_id")
+            if "sector" in camera:
+                raise ValueError("camera must use either sector_object_id or sector, not both")
+            if not isinstance(semantic_id, str):
+                raise ValueError("camera sector_object_id must be a string")
+            target = compiled.object_map.get(semantic_id)
+            if target is None or target[0] != "sector":
+                raise ValueError(f"camera references an unknown semantic sector {semantic_id!r}")
+            camera["sector"] = target[1]
+        resolved.append(CameraPose(**camera).request_record())
+    return resolved
 
 
 def dispatch(args: argparse.Namespace) -> object:
@@ -253,6 +283,14 @@ def dispatch(args: argparse.Namespace) -> object:
         level = read_map(args.map)
         cameras = json.loads(args.cameras.read_text(encoding="utf-8-sig")) if args.cameras else CameraPose(
             "entry", level.start_x, level.start_y, level.start_z, level.start_angle, sector=level.start_sector)
+        if args.project:
+            from .workspace import inspect_scene
+            with database(config.workspace_db, workspace=True) as db:
+                scene = inspect_scene(db, args.project)
+            values = [cameras.request_record()] if isinstance(cameras, CameraPose) else cameras
+            cameras = _resolve_camera_refs(args.map.read_bytes(), values, scene)
+        elif isinstance(cameras, list) and any(isinstance(item, dict) and "sector_object_id" in item for item in cameras):
+            raise ValueError("semantic camera sector_object_id requires --project")
         binary = args.executable or config.observer
         assets = args.assets or config.game_assets
         if config.reference_root:

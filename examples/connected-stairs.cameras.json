@@ -1,0 +1,6 @@
+[
+  {"id":"entry","x":-2048,"y":1536,"z":-5120,"angle":0,"horiz":100,"sector_object_id":"area/lower-room/sector","screenshot":true},
+  {"id":"stair-up","x":640,"y":1536,"z":-9216,"angle":0,"horiz":100,"sector_object_id":"stair/central-stair/step/0002/sector","screenshot":true},
+  {"id":"upper-lookback","x":3500,"y":1536,"z":-13312,"angle":1024,"horiz":100,"sector_object_id":"area/upper-room/sector","screenshot":true},
+  {"id":"corridor","x":6400,"y":1536,"z":-13312,"angle":1024,"horiz":100,"sector_object_id":"area/east-corridor/sector","screenshot":true}
+]

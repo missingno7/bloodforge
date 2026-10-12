@@ -1,5 +1,9 @@
 # Surface reconstruction checkpoint — 2026-10-12
 
+Follow-up: [connected-area evidence](connecting-areas-evidence.md) records the
+subsequent semantic landing/room compiler. This checkpoint describes the earlier
+source-held-fixed reconstruction stage.
+
 BloodForge can now reproduce a staircase's supported native surface settings
 and test it inside fixed original surroundings. It still cannot generate the
 surrounding room or reliably validate player traversal.
