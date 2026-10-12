@@ -1,0 +1,10 @@
+{
+  "revision": 0,
+  "stairs": [{
+    "id": "entry-stair", "count": 5, "width": 2048, "tread": 512,
+    "rise": 2048, "origin_x": 0, "origin_y": 0,
+    "floor_z": 32768, "ceiling_z": 0, "direction": "east",
+    "floor_tile": 0, "ceiling_tile": 0, "wall_tile": 0
+  }],
+  "player_start": null
+}

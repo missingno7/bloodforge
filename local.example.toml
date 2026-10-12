@@ -1,0 +1,8 @@
+[bloodforge]
+# Copy to local.toml (ignored). Relative paths are relative to this file.
+reference_root = 'D:\Games\DOS\llmapper'
+corpus_root = 'D:\Games\DOS\llmapper\maps\blood'
+data_root = 'data'
+# observer = 'path/to/observe.exe'
+# game_assets = 'path/to/Blood'
+# nblood = 'path/to/nblood.exe'
